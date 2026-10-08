@@ -1,13 +1,15 @@
 # Pocket48 Hook
 
-一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供四项可独立开关的功能：
+一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供六项可独立开关的功能：
 
 1. **去除流量弹框** —— 蜂窝网络下观看直播/视频时，跳过「当前是蜂窝网络播放，是否继续？」确认弹框，直接播放。
 2. **修改昵称最小字数改为 1** —— 绕过「昵称不能少于2个字」的限制，允许设置单字昵称。
 3. **悬浮液态玻璃底栏** —— 把主界面底部导航栏改成悬浮、圆角（胶囊形）、半透明真·毛玻璃质感。
 4. **进入房间免关注** —— 搜索成员点击头像进入房间时，未关注也不再弹「请先关注」，直接进入。
+5. **贡献周榜展示贡献值** —— 小偶像的「贡献周榜」里把被隐藏的贡献值列显示出来。
+6. **贡献值转人民币** —— 把贡献值换算成对应人民币数额一并展示（10 贡献值 = 1 元，如 10000 贡献值 ≈ 1000 元）。
 
-四项功能均提供**可视化设置界面**，可独立开关。
+六项功能均提供**可视化设置界面**，可独立开关。
 
 ---
 
@@ -61,9 +63,21 @@ license check failed when prepare -> license authorization failed (errorCode 536
 - **原逻辑**：点击成员头像后回调带「是否已关注」标志，未关注时 `j9.糴鷙鬚蠶(..., "请先关注")` 弹提示并阻断进入；已关注才走 `SNHActivityUtils.m7036()` 跳转 `/person/detail`（进入房间）。
 - **Hook 逻辑**：`beforeHookedMethod` 中把第二个参数（是否已关注）强制置为 `true`，直接进入房间。
 
-### 5. 设置界面
+### 5. 贡献周榜展示贡献值
 
-- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供四个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`）。
+- **Hook 目标**：`com.pocket.snh48.activity.rd1` 的 `貜簾鬚颱爩`（贡献周榜列表 `onBindViewHolder`）。
+- **原布局**：`item_week_contribution_rank` 的「贡献值」列（`tv_contribution_amount`，id `0x7f0a0fd2`）与其父 LinearLayout 在布局 XML 中 `visibility="gone"`，即列表只显示头像、昵称、等级图标，贡献值被隐藏。
+- **Hook 逻辑**：`afterHookedMethod` 中通过 `itemView.findViewById(0x7f0a0fd2)` 找到贡献值 TextView，把其父布局设为 `VISIBLE`，即可显示每位粉丝的贡献值（`totalCharm`）及「贡献值」标签。
+
+### 6. 贡献值转人民币
+
+- **换算规则**：10 贡献值 = 1 元（`CONTRIB_PER_YUAN = 10`），即 10000 贡献值 ≈ 1000 元。
+- **Hook 逻辑**：在「展示贡献值」的基础上，读取贡献值数字并追加一行换算结果，例如 `12345` → `12345\n≈ ¥1234.5`（整数元时不带小数）。幂等：文本已含换算结果（无法再解析为纯数字）时自动跳过。
+- **说明**：此开关默认开启（与其它开关一致），开启时会同时把贡献值列显示出来（不依赖上一项开关）。
+
+### 7. 设置界面
+
+- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供六个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`）。
 - Hook 端通过 `XSharedPreferences` 跨进程读取开关，按开关决定是否注入对应 hook。
 - 切换开关后需重启口袋48（或重启手机）生效。
 
@@ -82,7 +96,7 @@ license check failed when prepare -> license authorization failed (errorCode 536
 2. 安装本模块 `Pocket48去弹框Hook.apk`。
 3. 打开 LSPosed 管理器 → 模块 → 勾选「Pocket48 Hook」→ 作用域勾选「口袋48」。
 4. 重启手机（或强制停止口袋48 后重新打开）。
-5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换四个功能开关。
+5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换六个功能开关。
 
 ---
 
@@ -99,7 +113,8 @@ license check failed when prepare -> license authorization failed (errorCode 536
 | 昵称输入框      | `ActivityEditNickNameBinding`           | `cetUsername`                       |
 | 底栏         | `ActivityMainBinding`                   | `bottomNavigationView`              |
 | 内容区        | `ActivityMainBinding`                   | `viewPager`                         |
-| 进入房间免关注   | `...SearchActivity$龘龘籲蠶鼕`            | `簾籲蠶爩` (`\u7c3e\u7c72\u8836\u7229`) |
+| 进入房间免关注    | `...SearchActivity$龘龘籲蠶鼕`               | `簾籲蠶爩` (`\u7c3e\u7c72\u8836\u7229`) |
+| 贡献周榜展示贡献值  | `com.pocket.snh48.activity.rd1`           | `貜簾鬚颱爩` (`\u8c9c\u7c3e\u9b1a\u98b1\u7229`) |
 
 > 类名/方法名被 ProGuard 混淆为生僻汉字，需用 Unicode 转义引用。
 
@@ -126,8 +141,8 @@ hook_module/
 ├── assets/
 │   └── xposed_init            # 入口类声明：com.pocket48.hook.MainHook
 ├── java/com/pocket48/hook/
-│   ├── MainHook.java          # IXposedHookLoadPackage 入口，条件注入四个 hook
-│   └── MainActivity.java      # 设置界面（四个开关 + SharedPreferences）
+│   ├── MainHook.java          # IXposedHookLoadPackage 入口，条件注入六个 hook
+│   └── MainActivity.java      # 设置界面（六个开关 + SharedPreferences）
 ├── build.sh                   # 一键构建脚本
 └── build/                     # 构建产物（可删除，重新 build.sh 会重建）
 ```

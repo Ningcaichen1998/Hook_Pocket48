@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import java.lang.reflect.Method;
 
@@ -46,6 +47,12 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String SEARCH_CB_CLS = "com.pocket.snh48.home.ui.search.SearchActivity$\u9f98\u9f98\u7c72\u8836\u9f15"; // $龘龘籲蠶鼕
     private static final String ENTER_ROOM_METHOD = "\u7c3e\u7c72\u8836\u7229"; // 簾籲蠶爩(long, boolean)
 
+    // ===== 贡献周榜展示贡献值（把隐藏的贡献值列显示出来） =====
+    private static final String CONTRIB_ADAPTER = "com.pocket.snh48.activity.rd1";
+    private static final String CONTRIB_BIND_METHOD = "\u8c9c\u7c3e\u9b1a\u98b1\u7229"; // 貜簾鬚颱爩 (onBindViewHolder)
+    private static final int ID_CONTRIB_AMOUNT = 0x7f0a0fd2; // tv_contribution_amount
+    private static final long CONTRIB_PER_YUAN = 10L; // 10 贡献值 = 1 元（10000 贡献值 ≈ 1000 元）
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -64,6 +71,11 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         if (sp.getBoolean("enter_room_no_follow", true)) {
             hookEnterRoom(lp);
+        }
+        boolean contribVal = sp.getBoolean("contribution_value", true);
+        boolean contribRmb = sp.getBoolean("contribution_rmb", true);
+        if (contribVal || contribRmb) {
+            hookContribution(lp, contribRmb);
         }
     }
 
@@ -188,6 +200,66 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked enter-room follow gate");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook enter-room follow gate error: " + t);
+        }
+    }
+
+    /** 贡献周榜：把隐藏的贡献值列显示出来；showRmb 时再把贡献值换算成人民币数额一并展示 */
+    private void hookContribution(XC_LoadPackage.LoadPackageParam lp, final boolean showRmb) {
+        try {
+            final Class<?> rd1 = XposedHelpers.findClass(CONTRIB_ADAPTER, lp.classLoader);
+            XposedBridge.hookAllMethods(rd1, CONTRIB_BIND_METHOD, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object holder = param.args[0];
+                        if (holder == null) {
+                            return;
+                        }
+                        View itemView = (View) XposedHelpers.getObjectField(holder, "itemView");
+                        if (itemView == null) {
+                            return;
+                        }
+                        TextView amount = (TextView) itemView.findViewById(ID_CONTRIB_AMOUNT);
+                        if (amount == null) {
+                            return;
+                        }
+                        View parent = (View) amount.getParent();
+                        if (parent != null && parent.getVisibility() != View.VISIBLE) {
+                            parent.setVisibility(View.VISIBLE);
+                        }
+                        if (showRmb) {
+                            applyContributionRmb(amount);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] contribution value error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked week contribution display (rmb=" + showRmb + ")");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook contribution error: " + t);
+        }
+    }
+
+    /** 把贡献值文本追加换算后的人民币数额，例如 "12345" -> "12345\n≈ ¥1234.5"（幂等，解析失败即跳过） */
+    private void applyContributionRmb(TextView amount) {
+        try {
+            String raw = amount.getText().toString();
+            if (raw == null || raw.length() == 0) {
+                return;
+            }
+            long charm;
+            try {
+                charm = Long.parseLong(raw.trim());
+            } catch (NumberFormatException e) {
+                return; // 已处理过或不是纯数字
+            }
+            long yuan = charm / CONTRIB_PER_YUAN;
+            long jiao = charm % CONTRIB_PER_YUAN;
+            String rmb = jiao == 0 ? ("¥" + yuan) : ("¥" + yuan + "." + jiao);
+            amount.setText(charm + "\n≈ " + rmb);
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] contribution rmb error: " + t);
         }
     }
 

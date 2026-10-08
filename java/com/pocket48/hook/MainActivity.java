@@ -16,6 +16,8 @@ public class MainActivity extends Activity {
     public static final String KEY_NICK = "nick_min";
     public static final String KEY_GLASS = "glass_bottom";
     public static final String KEY_ENTER = "enter_room_no_follow";
+    public static final String KEY_CONTRIB = "contribution_value";
+    public static final String KEY_CONTRIB_RMB = "contribution_rmb";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -87,6 +89,32 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(swEnter);
+
+        Switch swContrib = new Switch(this);
+        swContrib.setText("贡献周榜展示贡献值");
+        swContrib.setTextSize(16);
+        swContrib.setTextColor(Color.BLACK);
+        swContrib.setChecked(sp.getBoolean(KEY_CONTRIB, true));
+        swContrib.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton v, boolean checked) {
+                sp.edit().putBoolean(KEY_CONTRIB, checked).apply();
+            }
+        });
+        root.addView(swContrib);
+
+        Switch swContribRmb = new Switch(this);
+        swContribRmb.setText("贡献值转人民币（10贡献值=1元）");
+        swContribRmb.setTextSize(16);
+        swContribRmb.setTextColor(Color.BLACK);
+        swContribRmb.setChecked(sp.getBoolean(KEY_CONTRIB_RMB, true));
+        swContribRmb.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton v, boolean checked) {
+                sp.edit().putBoolean(KEY_CONTRIB_RMB, checked).apply();
+            }
+        });
+        root.addView(swContribRmb);
 
         TextView tip = new TextView(this);
         tip.setText("修改开关后，重启口袋48（或重启手机）生效");
