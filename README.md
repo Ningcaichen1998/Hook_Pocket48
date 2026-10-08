@@ -1,12 +1,13 @@
 # Pocket48 Hook
 
-一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供三项可独立开关的功能：
+一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供四项可独立开关的功能：
 
 1. **去除流量弹框** —— 蜂窝网络下观看直播/视频时，跳过「当前是蜂窝网络播放，是否继续？」确认弹框，直接播放。
 2. **修改昵称最小字数改为 1** —— 绕过「昵称不能少于2个字」的限制，允许设置单字昵称。
 3. **悬浮液态玻璃底栏** —— 把主界面底部导航栏改成悬浮、圆角（胶囊形）、半透明真·毛玻璃质感。
+4. **进入房间免关注** —— 搜索成员点击头像进入房间时，未关注也不再弹「请先关注」，直接进入。
 
-三项功能均提供**可视化设置界面**，可独立开关。
+四项功能均提供**可视化设置界面**，可独立开关。
 
 ---
 
@@ -54,9 +55,15 @@ license check failed when prepare -> license authorization failed (errorCode 536
   - **玻璃质感**：50% 白（`#80FFFFFF`）底 + 12dp 阴影；
   - **真·毛玻璃**：延迟截图底栏背后内容（截图前先隐藏底栏自身）→ 纯 Java **Stack Blur** 算法模糊（半径 22dp）→ 叠加 15% 白（`#26FFFFFF`）作为背景。
 
-### 4. 设置界面
+### 4. 进入房间免关注
 
-- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供三个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`）。
+- **Hook 目标**：`com.pocket.snh48.home.ui.search.SearchActivity$龘龘籲蠶鼕` 的 `簾籲蠶爩(long, boolean)`（搜索成员列表点击头像进入房间的回调）。
+- **原逻辑**：点击成员头像后回调带「是否已关注」标志，未关注时 `j9.糴鷙鬚蠶(..., "请先关注")` 弹提示并阻断进入；已关注才走 `SNHActivityUtils.m7036()` 跳转 `/person/detail`（进入房间）。
+- **Hook 逻辑**：`beforeHookedMethod` 中把第二个参数（是否已关注）强制置为 `true`，直接进入房间。
+
+### 5. 设置界面
+
+- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供四个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`）。
 - Hook 端通过 `XSharedPreferences` 跨进程读取开关，按开关决定是否注入对应 hook。
 - 切换开关后需重启口袋48（或重启手机）生效。
 
@@ -75,7 +82,7 @@ license check failed when prepare -> license authorization failed (errorCode 536
 2. 安装本模块 `Pocket48去弹框Hook.apk`。
 3. 打开 LSPosed 管理器 → 模块 → 勾选「Pocket48 Hook」→ 作用域勾选「口袋48」。
 4. 重启手机（或强制停止口袋48 后重新打开）。
-5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换三个功能开关。
+5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换四个功能开关。
 
 ---
 
@@ -92,6 +99,7 @@ license check failed when prepare -> license authorization failed (errorCode 536
 | 昵称输入框      | `ActivityEditNickNameBinding`           | `cetUsername`                       |
 | 底栏         | `ActivityMainBinding`                   | `bottomNavigationView`              |
 | 内容区        | `ActivityMainBinding`                   | `viewPager`                         |
+| 进入房间免关注   | `...SearchActivity$龘龘籲蠶鼕`            | `簾籲蠶爩` (`\u7c3e\u7c72\u8836\u7229`) |
 
 > 类名/方法名被 ProGuard 混淆为生僻汉字，需用 Unicode 转义引用。
 
@@ -118,8 +126,8 @@ hook_module/
 ├── assets/
 │   └── xposed_init            # 入口类声明：com.pocket48.hook.MainHook
 ├── java/com/pocket48/hook/
-│   ├── MainHook.java          # IXposedHookLoadPackage 入口，条件注入三个 hook
-│   └── MainActivity.java      # 设置界面（三个开关 + SharedPreferences）
+│   ├── MainHook.java          # IXposedHookLoadPackage 入口，条件注入四个 hook
+│   └── MainActivity.java      # 设置界面（四个开关 + SharedPreferences）
 ├── build.sh                   # 一键构建脚本
 └── build/                     # 构建产物（可删除，重新 build.sh 会重建）
 ```

@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
-TOOLS="C:/Users/Administrator/WorkBuddy/2026-10-07-22-50-17/tools"
+TOOLS="C:/Users/Administrator/WorkBuddy/pocket48/tools"
 BT="C:/Users/Administrator/AppData/Local/Android/Sdk/build-tools/36.0.0"
 PLATFORM="C:/Users/Administrator/AppData/Local/Android/Sdk/platforms/android-37.0"
-JAVA="C:/Users/Administrator/WorkBuddy/2026-10-07-22-50-17/tools/jdk17/jdk-17.0.2/bin/java.exe"
-JAVAC="C:/Users/Administrator/WorkBuddy/2026-10-07-22-50-17/tools/jdk17/jdk-17.0.2/bin/javac.exe"
+JAVA="C:/Users/Administrator/WorkBuddy/pocket48/tools/jdk17/jdk-17.0.2/bin/java.exe"
+JAVAC="C:/Users/Administrator/WorkBuddy/pocket48/tools/jdk17/jdk-17.0.2/bin/javac.exe"
 
 cd "$TOOLS/hook_module"
 rm -rf build && mkdir -p build/classes build/dex

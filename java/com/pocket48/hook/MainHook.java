@@ -42,6 +42,10 @@ public class MainHook implements IXposedHookLoadPackage {
     // ===== 悬浮液态玻璃底栏 =====
     private static final String MAIN_ACT = "com.pocket.snh48.activity.view.main.MainActivity";
 
+    // ===== 进入房间免关注（搜索成员点进房间时跳过「请先关注」） =====
+    private static final String SEARCH_CB_CLS = "com.pocket.snh48.home.ui.search.SearchActivity$\u9f98\u9f98\u7c72\u8836\u9f15"; // $龘龘籲蠶鼕
+    private static final String ENTER_ROOM_METHOD = "\u7c3e\u7c72\u8836\u7229"; // 簾籲蠶爩(long, boolean)
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -57,6 +61,9 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         if (sp.getBoolean("glass_bottom", true)) {
             hookBottomBar(lp);
+        }
+        if (sp.getBoolean("enter_room_no_follow", true)) {
+            hookEnterRoom(lp);
         }
     }
 
@@ -163,6 +170,24 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked bottom bar glass");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook bottom bar error: " + t);
+        }
+    }
+
+    /** 进入房间免关注：搜索成员点击头像进入房间时，把「已关注」标志强制为 true，跳过「请先关注」提示直接进入 */
+    private void hookEnterRoom(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> cls = XposedHelpers.findClass(SEARCH_CB_CLS, lp.classLoader);
+            XposedHelpers.findAndHookMethod(cls, ENTER_ROOM_METHOD, long.class, boolean.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args.length >= 2) {
+                        param.args[1] = true; // 强制视为已关注
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked enter-room follow gate");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook enter-room follow gate error: " + t);
         }
     }
 

@@ -15,6 +15,7 @@ public class MainActivity extends Activity {
     public static final String KEY_PLAY = "play_flow";
     public static final String KEY_NICK = "nick_min";
     public static final String KEY_GLASS = "glass_bottom";
+    public static final String KEY_ENTER = "enter_room_no_follow";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,6 +74,19 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(swGlass);
+
+        Switch swEnter = new Switch(this);
+        swEnter.setText("进入房间免关注（未关注时直接进入）");
+        swEnter.setTextSize(16);
+        swEnter.setTextColor(Color.BLACK);
+        swEnter.setChecked(sp.getBoolean(KEY_ENTER, true));
+        swEnter.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton v, boolean checked) {
+                sp.edit().putBoolean(KEY_ENTER, checked).apply();
+            }
+        });
+        root.addView(swEnter);
 
         TextView tip = new TextView(this);
         tip.setText("修改开关后，重启口袋48（或重启手机）生效");
