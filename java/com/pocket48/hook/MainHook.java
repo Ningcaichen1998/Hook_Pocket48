@@ -1,9 +1,16 @@
 package com.pocket48.hook;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Outline;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.EditText;
 
 import java.lang.reflect.Method;
@@ -131,7 +138,7 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 悬浮液态玻璃底栏：底栏悬浮 + 圆角 + 半透明玻璃质感 */
+    /** 悬浮液态玻璃底栏：底栏悬浮 + 圆角 + 半透明玻璃质感，内容区占满全屏 */
     private void hookBottomBar(XC_LoadPackage.LoadPackageParam lp) {
         try {
             final Class<?> mainAct = XposedHelpers.findClass(MAIN_ACT, lp.classLoader);
@@ -141,10 +148,11 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         final Object binding = XposedHelpers.getObjectField(param.thisObject, "binding");
                         final View bottomNav = (View) XposedHelpers.getObjectField(binding, "bottomNavigationView");
+                        final View viewPager = (View) XposedHelpers.getObjectField(binding, "viewPager");
                         bottomNav.post(new Runnable() {
                             @Override
                             public void run() {
-                                applyLiquidGlass(bottomNav);
+                                applyLiquidGlass(bottomNav, viewPager);
                             }
                         });
                     } catch (Throwable t) {
@@ -158,32 +166,246 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private void applyLiquidGlass(View v) {
+    private void applyLiquidGlass(View bottomNav, View viewPager) {
         try {
-            float d = v.getResources().getDisplayMetrics().density;
+            float d = bottomNav.getResources().getDisplayMetrics().density;
             int m = Math.round(14 * d);   // 悬浮边距
-            int r = Math.round(24 * d);   // 圆角
+            int r = Math.round(34 * d);   // 圆角（加大）
 
-            ViewGroup.LayoutParams lp = v.getLayoutParams();
+            // 1. 内容区(ViewPager)占满全屏：高度改为 MATCH_PARENT（比改约束更可靠），
+            //    并加 onPreDraw 自愈，防止 App 之后复原布局参数
+            if (viewPager != null) {
+                final View vp = viewPager;
+                Runnable fixer = new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            ViewGroup.LayoutParams p = vp.getLayoutParams();
+                            boolean dirty = false;
+                            if (p.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+                                p.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                                dirty = true;
+                            }
+                            try {
+                                if (XposedHelpers.getIntField(p, "bottomToTop") != -1) {
+                                    XposedHelpers.setIntField(p, "bottomToTop", -1);
+                                    dirty = true;
+                                }
+                                if (XposedHelpers.getIntField(p, "bottomToBottom") != 0) {
+                                    XposedHelpers.setIntField(p, "bottomToBottom", 0);
+                                    dirty = true;
+                                }
+                            } catch (Throwable ignore) {
+                            }
+                            if (dirty) {
+                                vp.setLayoutParams(p);
+                                XposedBridge.log("[pocket48] viewPager fixed to full-screen");
+                            }
+                        } catch (Throwable t) {
+                            XposedBridge.log("[pocket48] viewPager fixer error: " + t);
+                        }
+                    }
+                };
+                fixer.run();
+                // 自愈：每次绘制前检查，若被 App 改回去则强制恢复
+                viewPager.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+                    @Override
+                    public boolean onPreDraw() {
+                        try {
+                            ViewGroup.LayoutParams p = vp.getLayoutParams();
+                            boolean dirty = false;
+                            if (p.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+                                p.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                                dirty = true;
+                            }
+                            try {
+                                if (XposedHelpers.getIntField(p, "bottomToTop") != -1) {
+                                    XposedHelpers.setIntField(p, "bottomToTop", -1);
+                                    dirty = true;
+                                }
+                                if (XposedHelpers.getIntField(p, "bottomToBottom") != 0) {
+                                    XposedHelpers.setIntField(p, "bottomToBottom", 0);
+                                    dirty = true;
+                                }
+                            } catch (Throwable ignore) {
+                            }
+                            if (dirty) {
+                                vp.setLayoutParams(p);
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                        return true;
+                    }
+                });
+
+                viewPager.setPadding(
+                        viewPager.getPaddingLeft(),
+                        viewPager.getPaddingTop(),
+                        viewPager.getPaddingRight(),
+                        0);
+            }
+
+            // 2. 底栏悬浮
+            ViewGroup.LayoutParams lp = bottomNav.getLayoutParams();
             if (lp instanceof ViewGroup.MarginLayoutParams) {
                 ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
                 mlp.leftMargin = m;
                 mlp.rightMargin = m;
                 mlp.bottomMargin = m;
-                v.setLayoutParams(mlp);
+                bottomNav.setLayoutParams(mlp);
             }
 
+            // 3. 圆角半透明玻璃背景 + 阴影（加大圆角、降低不透明度）
             GradientDrawable bg = new GradientDrawable();
-            bg.setColor(0xE6FFFFFF);       // 半透明白
+            bg.setColor(0x80FFFFFF);       // 50% 白，更通透
             bg.setCornerRadius(r);
-            v.setBackground(bg);
+            bottomNav.setBackground(bg);
 
-            v.setElevation(Math.round(12 * d));
-            v.setClipToOutline(true);
+            // 固定圆角轮廓：不依赖背景生成（换成 LayerDrawable 后轮廓会变矩形导致圆角失效）
+            bottomNav.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), 34 * view.getResources().getDisplayMetrics().density);
+                }
+            });
+            bottomNav.setClipToOutline(true);
+            bottomNav.setElevation(Math.round(12 * d));
+
+            // 4. 真·毛玻璃：延迟截图内容 + 模糊 + 作为背景
+            final int blurRadius = Math.round(22 * d);
+            bottomNav.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    applyBlurBackground(bottomNav, blurRadius);
+                }
+            }, 400);
             XposedBridge.log("[pocket48] applied liquid glass bottom bar");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] applyLiquidGlass error: " + t);
         }
+    }
+
+    /** 截图底栏背后内容，Stack Blur 模糊后叠加半透明白作为背景（真毛玻璃） */
+    private void applyBlurBackground(View bottomNav, int radius) {
+        try {
+            if (bottomNav.getWidth() <= 0 || bottomNav.getHeight() <= 0) return;
+            Bitmap captured = captureBackground(bottomNav);
+            if (captured == null) return;
+            Bitmap blurred = stackBlur(captured, radius);
+
+            GradientDrawable overlay = new GradientDrawable();
+            overlay.setColor(0x26FFFFFF);   // 15% 白叠加，更通透
+
+            LayerDrawable layer = new LayerDrawable(new Drawable[]{
+                    new BitmapDrawable(bottomNav.getResources(), blurred),
+                    overlay
+            });
+            bottomNav.setBackground(layer);
+            // 毛玻璃背景就位后，重设为「胶囊」轮廓（圆角 = 高度一半，最大圆角）
+            bottomNav.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    float pill = Math.min(view.getWidth(), view.getHeight()) / 2f;
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), pill);
+                }
+            });
+            bottomNav.setClipToOutline(true);
+            XposedBridge.log("[pocket48] applied blur background");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] applyBlurBackground error: " + t);
+        }
+    }
+
+    private Bitmap captureBackground(View v) {
+        try {
+            View root = v.getRootView();
+            int w = root.getWidth(), h = root.getHeight();
+            if (w <= 0 || h <= 0) return null;
+            // 截图时先隐藏底栏自己，避免把底栏旧外观截进毛玻璃里
+            int oldVis = v.getVisibility();
+            v.setVisibility(View.INVISIBLE);
+            Bitmap full = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(full);
+            root.draw(canvas);
+            v.setVisibility(oldVis);
+            int[] loc = new int[2];
+            v.getLocationOnScreen(loc);
+            int[] rl = new int[2];
+            root.getLocationOnScreen(rl);
+            int x = loc[0] - rl[0];
+            int y = loc[1] - rl[1];
+            int cw = Math.min(v.getWidth(), w - x);
+            int ch = Math.min(v.getHeight(), h - y);
+            if (cw <= 0 || ch <= 0) return null;
+            return Bitmap.createBitmap(full, x, y, cw, ch);
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] captureBackground error: " + t);
+            return null;
+        }
+    }
+
+    /** 经典 Stack Blur 算法（纯 Java，两遍水平+垂直） */
+    private Bitmap stackBlur(Bitmap bitmap, int radius) {
+        if (radius < 1) return bitmap;
+        int w = bitmap.getWidth(), h = bitmap.getHeight();
+        int[] pixels = new int[w * h];
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h);
+
+        int wm = w - 1, hm = h - 1;
+        int div = radius * 2 + 1;
+        int[] r = new int[w * h], g = new int[w * h], b = new int[w * h];
+        int[] vmin = new int[Math.max(w, h)];
+        int[] dv = new int[256 * div];
+        for (int i = 0; i < 256 * div; i++) dv[i] = i / div;
+
+        int yw = 0, yi = 0;
+        for (int y = 0; y < h; y++) {
+            int rsum = 0, gsum = 0, bsum = 0;
+            for (int i = -radius; i <= radius; i++) {
+                int p = pixels[yi + Math.min(wm, Math.max(i, 0))];
+                rsum += (p & 0xFF0000) >> 16;
+                gsum += (p & 0x00FF00) >> 8;
+                bsum += (p & 0x0000FF);
+            }
+            for (int x = 0; x < w; x++) {
+                r[yi] = dv[rsum];
+                g[yi] = dv[gsum];
+                b[yi] = dv[bsum];
+                if (y == 0) vmin[x] = Math.min(x + radius + 1, wm);
+                int p = pixels[yw + vmin[x]];
+                int p0 = pixels[yw + Math.max(x - radius, 0)];
+                rsum += ((p & 0xFF0000) >> 16) - ((p0 & 0xFF0000) >> 16);
+                gsum += ((p & 0x00FF00) >> 8) - ((p0 & 0x00FF00) >> 8);
+                bsum += (p & 0x0000FF) - (p0 & 0x0000FF);
+                yi++;
+            }
+            yw += w;
+        }
+
+        for (int x = 0; x < w; x++) {
+            int rsum = 0, gsum = 0, bsum = 0;
+            int yp = -radius * w;
+            for (int i = -radius; i <= radius; i++) {
+                int idx = Math.max(0, yp) + x;
+                rsum += r[idx];
+                gsum += g[idx];
+                bsum += b[idx];
+                yp += w;
+            }
+            yi = x;
+            for (int y = 0; y < h; y++) {
+                pixels[yi] = 0xFF000000 | (dv[rsum] << 16) | (dv[gsum] << 8) | dv[bsum];
+                if (x == 0) vmin[y] = Math.min(y + radius + 1, hm) * w;
+                rsum += r[x + Math.min(y + radius, hm) * w] - r[x + Math.max(y - radius, 0) * w];
+                gsum += g[x + Math.min(y + radius, hm) * w] - g[x + Math.max(y - radius, 0) * w];
+                bsum += b[x + Math.min(y + radius, hm) * w] - b[x + Math.max(y - radius, 0) * w];
+                yi += w;
+            }
+        }
+
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        result.setPixels(pixels, 0, w, 0, 0, w, h);
+        return result;
     }
 
     private EditText getNickEditText(Object activity) {
