@@ -84,6 +84,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int ID_MSG_TIME = 0x7f0a09ed; // id/messageTime（口袋48 资源 id，运行时直接比对）
     // 频道文本消息（房间）：布局无 messageTime 控件，动态在气泡外下方添加时间 TextView
     private static final String CHANNEL_TEXT_VH = "com.pocket.snh48.lib.yunxin.chatkit.messages.group.ChannelTextMsgVH";
+    private static final String CHANNEL_IMAGE_VH = "com.pocket.snh48.lib.yunxin.chatkit.messages.group.ChannelImageMessageViewHolder";
     private static final String YUNXIN_MSG = "com.pocket.snh48.lib.yunxin.bean.YunXinMessage";
     private static final int ID_BUBBLE = 0x7f0a01af;     // id/bubble（气泡容器）
     private static final int ID_MSG_TIME_ADD = 0x7f7f0001; // 动态添加的时间 TextView 固定 id
@@ -479,12 +480,13 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook messageTime visibility error: " + t);
         }
-        // 频道文本消息（房间）：布局无 messageTime，动态在气泡外下方添加时间 TextView
+        // 频道文本/图片消息（房间）：布局无 messageTime，动态在气泡外下方添加时间 TextView
         try {
-            final Class<?> vh = XposedHelpers.findClass(CHANNEL_TEXT_VH, lp.classLoader);
+            final Class<?> vhText = XposedHelpers.findClass(CHANNEL_TEXT_VH, lp.classLoader);
+            final Class<?> vhImage = XposedHelpers.findClass(CHANNEL_IMAGE_VH, lp.classLoader);
             final Class<?> yunxinMsg = XposedHelpers.findClass(YUNXIN_MSG, lp.classLoader);
-            final Class<?> bubble = XposedHelpers.findClass(MSG_BUBBLE, lp.classLoader);
-            XposedHelpers.findAndHookMethod(vh, "onBind", yunxinMsg, bubble, new XC_MethodHook() {
+            final Class<?> bubbleCls = XposedHelpers.findClass(MSG_BUBBLE, lp.classLoader);
+            XC_MethodHook channelBindHook = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
@@ -498,16 +500,26 @@ public class MainHook implements IXposedHookLoadPackage {
                         XposedBridge.log("[pocket48] channel time below error: " + t);
                     }
                 }
-            });
-            XposedBridge.log("[pocket48] hooked channel text time below");
+            };
+            XposedHelpers.findAndHookMethod(vhText, "onBind", yunxinMsg, bubbleCls, channelBindHook);
+            XposedHelpers.findAndHookMethod(vhImage, "onBind", yunxinMsg, bubbleCls, channelBindHook);
+            XposedBridge.log("[pocket48] hooked channel text/image time below");
         } catch (Throwable t) {
-            XposedBridge.log("[pocket48] hook channel text time error: " + t);
+            XposedBridge.log("[pocket48] hook channel time error: " + t);
         }
     }
 
-    /** 在气泡容器下方动态添加（或复用）时间 TextView，等布局完成后定位（气泡是 root 直接子 View） */
+    /**
+     * 在气泡容器下方动态添加（或复用）时间 TextView。
+     * 定位策略（修复复用错位/丢失）：
+     * 1. 气泡上挂常驻 OnLayoutChangeListener，气泡每次布局变化都重新定位
+     * 2. 每次 onBind 后 post 一次立即定位（复用的 item 气泡已有尺寸，不会再触发布局回调）
+     * 3. 用 setX/setY（translation）定位：ConstraintLayout 忽略无约束子 View 的 margin，约束字段又被混淆
+     */
     private void addTimeBelowBubble(final ViewGroup root, String timeStr, XC_LoadPackage.LoadPackageParam lp) {
         try {
+            final View bubble = root.findViewById(ID_BUBBLE);
+            if (bubble == null) return; // 布局无气泡容器，跳过
             TextView tv = (TextView) root.findViewById(ID_MSG_TIME_ADD);
             if (tv == null) {
                 tv = new TextView(root.getContext());
@@ -522,29 +534,47 @@ public class MainHook implements IXposedHookLoadPackage {
                 // 气泡底部对齐 root 底部（item 高度=气泡底部），时间会被裁剪；增加底部 padding 留出空间
                 root.setPadding(root.getPaddingLeft(), root.getPaddingTop(), root.getPaddingRight(),
                         root.getPaddingBottom() + dpPx(root, 18));
+                // 常驻监听：气泡每次布局变化都重新定位（复用/滚动时也生效）
+                bubble.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                    @Override
+                    public void onLayoutChange(View v, int l, int t, int r, int b,
+                                               int ol, int ot, int or2, int ob) {
+                        try {
+                            TextView time = (TextView) root.findViewById(ID_MSG_TIME_ADD);
+                            if (time == null || v.getWidth() == 0 || v.getHeight() == 0) return;
+                            positionTime(root, v, time);
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
             }
             tv.setText(timeStr);
-            // 布局完成后一次性定位（气泡未布局时保留监听等下次）
-            root.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-                @Override
-                public void onGlobalLayout() {
-                    try {
-                        View b = root.findViewById(ID_BUBBLE);
-                        TextView t = (TextView) root.findViewById(ID_MSG_TIME_ADD);
-                        if (b == null || t == null || b.getWidth() == 0 || b.getHeight() == 0) {
-                            return; // 尚未布局，保留监听等下次
+            // 绑定后立即定位一次（复用的 item 气泡已布局，不会再触发 layout change）
+            if (bubble.getWidth() > 0 && bubble.getHeight() > 0) {
+                final TextView tvFinal = tv;
+                final View bFinal = bubble;
+                tvFinal.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            positionTime(root, bFinal, tvFinal);
+                        } catch (Throwable ignore) {
                         }
-                        root.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        // ConstraintLayout 会忽略无约束子 View 的 margin，改用 setX/setY（translation）定位
-                        t.setX(b.getLeft());
-                        t.setY(b.getTop() + b.getHeight() + dpPx(root, 2));
-                        XposedBridge.log("[pocket48] time positioned: left=" + b.getLeft() + " top=" + b.getTop() + " h=" + b.getHeight());
-                    } catch (Throwable ignore) {
                     }
-                }
-            });
+                });
+            }
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] add time below error: " + t);
+        }
+    }
+
+    /** 定位时间到气泡正下方、左对齐气泡（x 限制在 padding 内防左侧裁剪） */
+    private void positionTime(ViewGroup root, View bubble, TextView time) {
+        int x = Math.max(bubble.getLeft(), root.getPaddingLeft());
+        int y = bubble.getTop() + bubble.getHeight() + dpPx(root, 2);
+        if (time.getX() != x || time.getY() != y) {
+            time.setX(x);
+            time.setY(y);
         }
     }
 
