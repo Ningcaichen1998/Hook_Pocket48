@@ -521,7 +521,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 root.addView(tv, (ViewGroup.LayoutParams) lpParams);
             }
             tv.setText(timeStr);
-            // 布局完成后一次性定位（气泡未布局时保留监听等下一次）
+            // 布局完成后一次性定位（气泡未布局时保留监听等下次）
             root.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
                 @Override
                 public void onGlobalLayout() {
@@ -532,10 +532,9 @@ public class MainHook implements IXposedHookLoadPackage {
                             return; // 尚未布局，保留监听等下次
                         }
                         root.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) t.getLayoutParams();
-                        mlp.leftMargin = b.getLeft();
-                        mlp.topMargin = b.getTop() + b.getHeight() + dpPx(root, 2);
-                        t.setLayoutParams(mlp);
+                        // ConstraintLayout 会忽略无约束子 View 的 margin，改用 setX/setY（translation）定位
+                        t.setX(b.getLeft());
+                        t.setY(b.getTop() + b.getHeight() + dpPx(root, 2));
                         XposedBridge.log("[pocket48] time positioned: left=" + b.getLeft() + " top=" + b.getTop() + " h=" + b.getHeight());
                     } catch (Throwable ignore) {
                     }
