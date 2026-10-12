@@ -134,6 +134,7 @@ public class MainHook implements IXposedHookLoadPackage {
         if (sp.getBoolean("msg_time_sec", true)) {
             hookMessageTime(lp);
         }
+        XposedBridge.log("[pocket48] switch msg_text_time=" + sp.getBoolean("msg_text_time", false));
         if (sp.getBoolean("msg_text_time", false)) {
             hookTextTime(lp);
         }
@@ -536,11 +537,13 @@ public class MainHook implements IXposedHookLoadPackage {
                         String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
                         View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
                         TextView text = (TextView) itemView.findViewById(ID_MSG_TEXT);
-                        if (text != null) {
-                            String cur = text.getText().toString();
-                            if (!cur.endsWith(timeStr)) {
-                                text.append("\n" + timeStr);
-                            }
+                        if (text == null) {
+                            XposedBridge.log("[pocket48] text time: messageText not found");
+                            return;
+                        }
+                        String cur = text.getText().toString();
+                        if (!cur.endsWith(timeStr)) {
+                            text.append("\n" + timeStr);
                         }
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] text time error: " + t);
