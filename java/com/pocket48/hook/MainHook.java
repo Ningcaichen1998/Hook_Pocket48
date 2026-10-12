@@ -2,6 +2,7 @@ package com.pocket48.hook;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
@@ -108,6 +109,14 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
     private static final String[] HIDDEN_CHANNEL_TABS = {"公演", "微博", "48动态", "社区公约", "青少年使用规范"};
 
+    // ===== 退出直播去掉「小窗模式」提示 =====
+    private static final String DIALOG_FACTORY = "com.pocket.snh48.activity.蠶颱貜蠶簾"; // C9118
+    private static final String DIALOG_FACTORY_METHOD = "鷙竈貜龘矡鬚鷙";              // m33983(Context,String,String,String,listener,listener)
+    private static final DialogInterface DUMMY_DIALOG = new DialogInterface() {
+        @Override public void cancel() { }
+        @Override public void dismiss() { }
+    };
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -145,6 +154,8 @@ public class MainHook implements IXposedHookLoadPackage {
         hookTextTime(lp);
         // 频道顶栏 tab 过滤：无条件注册，开关在 setter 时通过 ContentProvider 动态读取
         hookChannelTabs(lp);
+        // 退出直播直接退出（去掉小窗模式提示）：无条件注册，开关经 ContentProvider 动态读取
+        hookExitLiveDirect(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
         }
@@ -644,6 +655,41 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked channel tab equal width");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook tab width error: " + t);
+        }
+    }
+
+    /**
+     * 退出直播直接退出：去掉「继续以小窗模式陪伴成员？」提示框。
+     * Hook 对话框工厂 m33983（创建「小窗观看」弹窗的唯一入口，4 处退出场景共用），
+     * 命中时直接触发「退出」回调（含 h9.m16844 释放资源 + finish 等完整清理）并跳过弹窗。
+     */
+    private void hookExitLiveDirect(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> cls = XposedHelpers.findClass(DIALOG_FACTORY, lp.classLoader);
+            final Class<?> listener = DialogInterface.OnClickListener.class;
+            XposedHelpers.findAndHookMethod(cls, DIALOG_FACTORY_METHOD,
+                    Context.class, String.class, String.class, String.class, listener, listener,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (!"小窗观看".equals(param.args[2])) return;
+                                Context ctx = currentApplication();
+                                if (ctx == null || !readSwitch(ctx, "exit_live_direct", true)) return;
+                                DialogInterface.OnClickListener exit = (DialogInterface.OnClickListener) param.args[5];
+                                if (exit != null) {
+                                    exit.onClick(DUMMY_DIALOG, 0);
+                                }
+                                param.setResult(null);
+                                XposedBridge.log("[pocket48] exit live directly (skip pip dialog)");
+                            } catch (Throwable t) {
+                                XposedBridge.log("[pocket48] exit live direct error: " + t);
+                            }
+                        }
+                    });
+            XposedBridge.log("[pocket48] hooked exit live direct");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook exit live error: " + t);
         }
     }
 

@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     public static final String KEY_MSG_TIME = "msg_time_sec";
     public static final String KEY_MSG_TEXT_TIME = "msg_text_time";
     public static final String KEY_HIDE_TABS = "hide_channel_tabs";
+    public static final String KEY_EXIT_LIVE_DIRECT = "exit_live_direct";
     public static final String KEY_MSG_REVOKE = "msg_anti_revoke";
 
     private static final int REQ_PICK_BG = 1001;
@@ -169,6 +170,12 @@ public class MainActivity extends Activity {
                 prefs.getBoolean(KEY_HIDE_TABS, true), new CompoundButton.OnCheckedChangeListener() {
                     @Override public void onCheckedChanged(CompoundButton v, boolean c) {
                         prefs.edit().putBoolean(KEY_HIDE_TABS, c).apply();
+                    }
+                }));
+        content.addView(buildFeatureCard("📺", "退出直播直接退出", "去掉「继续以小窗模式陪伴成员」提示，直接退出",
+                prefs.getBoolean(KEY_EXIT_LIVE_DIRECT, true), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton v, boolean c) {
+                        prefs.edit().putBoolean(KEY_EXIT_LIVE_DIRECT, c).apply();
                     }
                 }));
         content.addView(buildFeatureCard("🛡️", "消息防撤回", "对方撤回的消息保留不消失",
