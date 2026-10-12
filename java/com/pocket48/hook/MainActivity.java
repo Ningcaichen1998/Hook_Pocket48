@@ -36,6 +36,9 @@ public class MainActivity extends Activity {
     public static final String KEY_CONTRIB = "contribution_value";
     public static final String KEY_CONTRIB_RMB = "contribution_rmb";
     public static final String KEY_SPLASH = "skip_splash_ad";
+    public static final String KEY_CHECKIN = "auto_checkin";
+    public static final String KEY_MSG_TIME = "msg_time_sec";
+    public static final String KEY_MSG_REVOKE = "msg_anti_revoke";
 
     private static final int REQ_PICK_BG = 1001;
 
@@ -140,6 +143,24 @@ public class MainActivity extends Activity {
                 prefs.getBoolean(KEY_SPLASH, true), new CompoundButton.OnCheckedChangeListener() {
                     @Override public void onCheckedChanged(CompoundButton v, boolean c) {
                         prefs.edit().putBoolean(KEY_SPLASH, c).apply();
+                    }
+                }));
+        content.addView(buildFeatureCard("📅", "自动每日签到", "每日首次启动自动完成签到",
+                prefs.getBoolean(KEY_CHECKIN, true), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton v, boolean c) {
+                        prefs.edit().putBoolean(KEY_CHECKIN, c).apply();
+                    }
+                }));
+        content.addView(buildFeatureCard("🕐", "消息时间精确到秒", "消息发送时间显示精确到秒",
+                prefs.getBoolean(KEY_MSG_TIME, true), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton v, boolean c) {
+                        prefs.edit().putBoolean(KEY_MSG_TIME, c).apply();
+                    }
+                }));
+        content.addView(buildFeatureCard("🛡️", "消息防撤回", "对方撤回的消息保留不消失",
+                prefs.getBoolean(KEY_MSG_REVOKE, true), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton v, boolean c) {
+                        prefs.edit().putBoolean(KEY_MSG_REVOKE, c).apply();
                     }
                 }));
 

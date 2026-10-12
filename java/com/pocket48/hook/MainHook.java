@@ -1,6 +1,8 @@
 package com.pocket48.hook;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Outline;
@@ -8,6 +10,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.os.Handler;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
@@ -15,6 +18,9 @@ import android.widget.EditText;
 import android.widget.TextView;
 
 import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -58,6 +64,21 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String SPLASH_DO_NEXT = "doNext";      // 接口 ku 方法，未混淆
     private static final String SPLASH_NO_ACTION = "noActionDo"; // 接口 ku 方法，清空广告数据并跳主页
 
+    // ===== 自动签到（每日首次启动） =====
+    private static final String CHECKIN_HELPER = "com.pocket.snh48.base.utils.punch.CheckinDataHelper";
+    private static final String CHECKIN_METHOD = "\u7ac8\u9f15\u7229\u8c9c"; // 竈鼕爩貜 (m44649 检查今日并自动签到)
+
+    // ===== 消息时间精确到秒 =====
+    private static final String DATE_FORMATTER = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter";
+    private static final String DF_TEMPLATE = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter$Template";
+    private static final String DF_FORMAT_METHOD = "\u9dd9\u7c72\u77e1"; // 鷙籲矡 (m52138(Date, Template))
+
+    // ===== 消息防撤回 =====
+    private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
+    private static final String REVOKE_A = "com.netease.nimlib.biz.e.a";
+    private static final String REVOKE_U = "com.netease.nimlib.biz.e.k.u";
+    private static final String REVOKE_AA = "com.netease.nimlib.biz.e.k.aa";
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -84,6 +105,15 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         if (sp.getBoolean("skip_splash_ad", true)) {
             hookSplashAd(lp);
+        }
+        if (sp.getBoolean("auto_checkin", true)) {
+            hookAutoCheckin(lp);
+        }
+        if (sp.getBoolean("msg_time_sec", true)) {
+            hookMessageTime(lp);
+        }
+        if (sp.getBoolean("msg_anti_revoke", true)) {
+            hookAntiRevoke(lp);
         }
     }
 
@@ -267,6 +297,102 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked splash ad skip");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook splash ad error: " + t);
+        }
+    }
+
+    /** 自动签到：每日首次进入主页后延迟触发签到 */
+    private void hookAutoCheckin(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> mainAct = XposedHelpers.findClass(MAIN_ACT, lp.classLoader);
+            final Class<?> helperCls = XposedHelpers.findClass(CHECKIN_HELPER, lp.classLoader);
+            XposedHelpers.findAndHookMethod(mainAct, "onCreate", android.os.Bundle.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        final Activity act = (Activity) param.thisObject;
+                        new Handler().postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                tryAutoCheckin(act, helperCls);
+                            }
+                        }, 2000);
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] auto checkin schedule error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked auto checkin");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook auto checkin error: " + t);
+        }
+    }
+
+    /** 每天只触发一次签到（用目标 App 的 sp 记录日期），创建 CheckinDataHelper 并调用检查方法 */
+    private void tryAutoCheckin(Activity act, Class<?> helperCls) {
+        try {
+            SharedPreferences sp = act.getSharedPreferences("pocket48_hook_checkin", Context.MODE_PRIVATE);
+            String today = new SimpleDateFormat("yyyyMMdd", Locale.US).format(new Date());
+            if (today.equals(sp.getString("last", ""))) {
+                return;
+            }
+            sp.edit().putString("last", today).apply();
+            Object helper = XposedHelpers.newInstance(helperCls, act);
+            XposedHelpers.callMethod(helper, CHECKIN_METHOD);
+            XposedBridge.log("[pocket48] auto checkin triggered");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] auto checkin error: " + t);
+        }
+    }
+
+    /** 消息时间精确到秒：把 TIME 模板 "HH:mm" 改为 "HH:mm:ss" */
+    private void hookMessageTime(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> df = XposedHelpers.findClass(DATE_FORMATTER, lp.classLoader);
+            final Class<?> templateCls = XposedHelpers.findClass(DF_TEMPLATE, lp.classLoader);
+            XposedHelpers.findAndHookMethod(df, DF_FORMAT_METHOD, Date.class, templateCls, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Object tmpl = param.args[1];
+                        Date date = (Date) param.args[0];
+                        if (tmpl != null && "TIME".equals(tmpl.toString()) && date != null) {
+                            param.setResult(new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(date));
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] msg time error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked message time to seconds");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook message time error: " + t);
+        }
+    }
+
+    /** 消息防撤回：拦截 NIM 撤回通知处理（u=单条撤回 / aa=批量撤回），消息不被删除 */
+    private void hookAntiRevoke(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> mCls = XposedHelpers.findClass(REVOKE_M, lp.classLoader);
+            final Class<?> aCls = XposedHelpers.findClass(REVOKE_A, lp.classLoader);
+            final Class<?> uCls = XposedHelpers.findClass(REVOKE_U, lp.classLoader);
+            final Class<?> aaCls = XposedHelpers.findClass(REVOKE_AA, lp.classLoader);
+            XposedHelpers.findAndHookMethod(mCls, "a", aCls, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Object arg = param.args[0];
+                        if (arg != null && (uCls.isInstance(arg) || aaCls.isInstance(arg))) {
+                            param.setResult(null);
+                            XposedBridge.log("[pocket48] blocked message revoke");
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] anti revoke error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked message anti-revoke");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook anti-revoke error: " + t);
         }
     }
 

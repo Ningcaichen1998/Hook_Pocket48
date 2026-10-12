@@ -1,6 +1,6 @@
 # Pocket48 Hook
 
-一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供七项可独立开关的功能：
+一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供十项可独立开关的功能：
 
 1. **去除流量弹框** —— 蜂窝网络下观看直播/视频时，跳过「当前是蜂窝网络播放，是否继续？」确认弹框，直接播放。
 2. **修改昵称最小字数改为 1** —— 绕过「昵称不能少于2个字」的限制，允许设置单字昵称。
@@ -9,8 +9,11 @@
 5. **贡献周榜展示贡献值** —— 小偶像的「贡献周榜」里把被隐藏的贡献值列显示出来。
 6. **贡献值转人民币** —— 把贡献值换算成对应人民币数额一并展示（10 贡献值 = 1 元，如 10000 贡献值 ≈ 1000 元）。
 7. **去开屏广告/启动页** —— 跳过启动时的图片/视频开屏广告，直接进入主页。
+8. **自动每日签到** —— 每日第一次启动自动完成签到（领取鸡翅/成长值）。
+9. **消息时间精确到秒** —— 聊天消息的发送时间显示精确到秒。
+10. **消息防撤回** —— 对方撤回的消息保留不消失。
 
-七项功能均提供**可视化设置界面**，可独立开关。
+十项功能均提供**可视化设置界面**，可独立开关。
 
 ## 适配版本
 
@@ -88,9 +91,27 @@ license check failed when prepare -> license authorization failed (errorCode 536
 - **原逻辑**：启动时 `doNext()` 根据拉取的广告数据（`adType` 1=图片 / 4=视频）显示开屏广告，无广告才走 `noAdAction()` 跳主页。
 - **Hook 逻辑**：`beforeHookedMethod` 中直接调用接口方法 `noActionDo()`（清空广告数据 `f19513`/`f19514` 并跳转主页）并 `setResult(null)` 跳过原方法，从而不显示广告、直接进入主页。广告数据请求照常发出，只是返回后不再展示。
 
-### 8. 设置界面
+### 8. 自动每日签到
 
-- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供七个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`、`skip_splash_ad`）。
+- **Hook 目标**：`MainActivity.onCreate` 触发，反射创建 `com.pocket.snh48.base.utils.punch.CheckinDataHelper` 并调用其检查方法（混淆名 `竈鼕爩貜`，`\u7ac8\u9f15\u7229\u8c9c`）。
+- **原逻辑**：签到入口在「成长值」页面（`C10419`），需手动打开页面才触发 `CheckinDataHelper` 的「检查今日 + 未签到则签到」流程。
+- **Hook 逻辑**：进入主页后延迟 2 秒，用目标 App 的 SharedPreferences 记录「今日已触发」日期，每天只触发一次，自动完成签到（签到成功会弹「鸡翅+ / 成长值+」提示）。
+
+### 9. 消息时间精确到秒
+
+- **Hook 目标**：`com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter` 的 `m52138(Date, Template)`（混淆名 `鷙籲矡`，`\u9dd9\u7c72\u77e1`）。
+- **原逻辑**：消息气泡时间用 `Template.TIME`（`"HH:mm"`）只显示时分。
+- **Hook 逻辑**：`beforeHookedMethod` 中当模板为 `TIME` 时，改用 `"HH:mm:ss"` 格式化，精确到秒。
+
+### 10. 消息防撤回
+
+- **Hook 目标**：`com.netease.nimlib.biz.c.j.m` 的撤回处理入口 `a(com.netease.nimlib.biz.e.a)`。
+- **原逻辑**：收到对方撤回推送（`biz.e.k.u` 单条 / `biz.e.k.aa` 批量）时删除本地消息、保存撤回标记。
+- **Hook 逻辑**：`beforeHookedMethod` 中当参数为撤回通知类型（`u`/`aa`）时直接 `setResult(null)` 拦截，消息不被删除、保留原内容。
+
+### 11. 设置界面
+
+- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供十个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`、`skip_splash_ad`、`auto_checkin`、`msg_time_sec`、`msg_anti_revoke`）。
 - Hook 端通过 `XSharedPreferences` 跨进程读取开关，按开关决定是否注入对应 hook。
 - 切换开关后需重启口袋48（或重启手机）生效。
 - 界面为卡片式布局（圆角卡片 + 功能图标 + 标题/副标题 + 开关），支持**自定义背景图**：点击「更换图片」从相册选择一张图作为设置界面背景（复制到模块私有目录，图片自动缩放避免 OOM），「恢复默认」还原为浅色渐变。
