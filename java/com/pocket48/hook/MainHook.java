@@ -21,9 +21,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.Locale;
-import java.util.Set;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -92,13 +90,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int ID_BUBBLE = 0x7f0a01af;     // id/bubble（气泡容器）
     private static final int ID_MSG_TIME_ADD = 0x7f7f0001; // 动态添加的时间 TextView 固定 id
     private static final int ID_NAME = 0x7f0a13a0;        // 昵称 TextView（气泡 topToBottom 指向它，用于反推字段）
-    private static final int ID_CORNER_START = 0x7f0a089e; // 左上角装饰（startToStart+topToTop=bubble）
-    private static final int ID_CORNER_END = 0x7f0a0ba8;   // 右上角装饰（endToEnd+topToTop=bubble）
 
     // 运行时反推出的 ConstraintLayout.LayoutParams 混淆约束字段（缓存）
     private static volatile Field F_topToBottom;
-    private static volatile Field F_startToStart;
-    private static volatile Field F_endToEnd;
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -521,11 +515,11 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 在气泡下方显示时间（v2.19 方案：兄弟 View + 反推混淆约束字段）。
-     * 根容器是 ConstraintLayout，约束字段（topToBottom 等）被 ProGuard 混淆，无法按名字反射；
-     * LinearLayout 包裹会破坏 onBind 里对 bubble.getLayoutParams() 的类型强转（导致崩溃）。
-     * 因此：把时间作为气泡的兄弟 View 加入，并在运行时从布局已有的约束值反推出混淆字段名，
-     * 直接设置真实约束（topToBottom/startToStart/endToEnd = 气泡），交给 ConstraintLayout 原生布局。
+     * 在气泡下方显示时间（v2.20 方案：topToBottom 约束定 y + translationX 定 x）。
+     * v2.19 实测：topToBottom 反推可靠（时间 y 正确出现在气泡下方），
+     * 但 startToStart/endToEnd 反推出错（时间 x 贴最左）。
+     * 因此：垂直方向只设已验证可靠的 topToBottom=气泡；水平方向 CL 会把无水平约束的
+     * 子 View 放到左缘，用 translationX 平移到气泡下方居中（CL 布局不会重置 translation）。
      */
     private void addTimeBelowBubble(ViewGroup root, String timeStr) {
         try {
@@ -548,15 +542,13 @@ public class MainHook implements IXposedHookLoadPackage {
                 tv.setTextColor(0xFF8A8FA3);
                 tv.setGravity(android.view.Gravity.CENTER);
 
-                // 反推混淆字段名并设置约束
-                deriveConstraintFields(root, clLp);
-                if (F_topToBottom == null || F_startToStart == null || F_endToEnd == null) {
-                    XposedBridge.log("[pocket48] derive constraint fields failed, skip time");
+                // 垂直：topToBottom=气泡（字段反推已实测可靠）
+                deriveTopToBottomField(root, clLp);
+                if (F_topToBottom == null) {
+                    XposedBridge.log("[pocket48] derive topToBottom failed, skip time");
                     return;
                 }
                 F_topToBottom.setInt(lpObj, ID_BUBBLE);
-                F_startToStart.setInt(lpObj, ID_BUBBLE);
-                F_endToEnd.setInt(lpObj, ID_BUBBLE);
                 ((ViewGroup.MarginLayoutParams) lpObj).topMargin = dpPx(root, 2);
 
                 root.addView(tv, (ViewGroup.LayoutParams) lpObj);
@@ -565,64 +557,53 @@ public class MainHook implements IXposedHookLoadPackage {
                         root.getPaddingBottom() + dpPx(root, 18));
             }
             tv.setText(timeStr);
+            // 水平：布局完成后用 translationX 平移到气泡下方居中
+            final TextView tvF = tv;
+            final View bF = bubble;
+            tvF.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (bF.getWidth() == 0) return;
+                        int w = tvF.getWidth() > 0 ? tvF.getWidth() : tvF.getMeasuredWidth();
+                        int x = bF.getLeft() + (bF.getWidth() - w) / 2;
+                        if (x < 0) x = bF.getLeft();
+                        if (tvF.getTranslationX() != x) tvF.setTranslationX(x);
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] add time below error: " + t);
         }
     }
 
     /**
-     * 反推 ConstraintLayout.LayoutParams 中被混淆的约束字段名（只做一次，缓存到静态字段）。
-     * 依据（来自 item_channel_text_msg 布局）：
-     * - 气泡 topToBottom 指向昵称 TextView(ID_NAME)，故气泡 lp 中值为 ID_NAME 的 int 字段即 topToBottom
-     * - 左上角装饰(ID_CORNER_START) 有 startToStart=bubble + topToTop=bubble
-     * - 右上角装饰(ID_CORNER_END) 有 endToEnd=bubble + topToTop=bubble
-     *   两者取交集得 topToTop，各自差集得 startToStart / endToEnd
+     * 反推 ConstraintLayout.LayoutParams 中被混淆的 topToBottom 字段（只做一次，缓存）。
+     * 依据：气泡 topToBottom 指向昵称 TextView(ID_NAME)，故气泡 lp 中值为 ID_NAME 的 int 字段即 topToBottom。
      */
-    private void deriveConstraintFields(View root, Class<?> clLp) {
-        if (F_topToBottom != null && F_startToStart != null && F_endToEnd != null) return;
+    private void deriveTopToBottomField(View root, Class<?> clLp) {
+        if (F_topToBottom != null) return;
         synchronized (this) {
-            if (F_topToBottom != null && F_startToStart != null && F_endToEnd != null) return;
+            if (F_topToBottom != null) return;
             View bubble = root.findViewById(ID_BUBBLE);
             View name = root.findViewById(ID_NAME);
-            View cornerStart = root.findViewById(ID_CORNER_START);
-            View cornerEnd = root.findViewById(ID_CORNER_END);
-            // topToBottom：气泡 lp 中值为昵称 id 的 int 字段
-            F_topToBottom = findIntField(clLp, bubble.getLayoutParams(), name.getId());
-            // startToStart / endToEnd：从两个装饰视图反推
-            Set<Field> startSet = intFieldsEqualTo(clLp, cornerStart.getLayoutParams(), bubble.getId());
-            Set<Field> endSet = intFieldsEqualTo(clLp, cornerEnd.getLayoutParams(), bubble.getId());
-            Set<Field> common = new HashSet<>(startSet);
-            common.retainAll(endSet); // 交集 = topToTop
-            Set<Field> startOnly = new HashSet<>(startSet);
-            startOnly.removeAll(common);
-            Set<Field> endOnly = new HashSet<>(endSet);
-            endOnly.removeAll(common);
-            F_startToStart = startOnly.isEmpty() ? null : startOnly.iterator().next();
-            F_endToEnd = endOnly.isEmpty() ? null : endOnly.iterator().next();
-            XposedBridge.log("[pocket48] derived constraint fields: topToBottom=" + (F_topToBottom != null)
-                    + " startToStart=" + (F_startToStart != null) + " endToEnd=" + (F_endToEnd != null));
-        }
-    }
-
-    /** 在 lp 实例中查找值为 target 的 int 字段（用于反推约束字段） */
-    private Field findIntField(Class<?> clLp, Object lp, int target) {
-        Set<Field> set = intFieldsEqualTo(clLp, lp, target);
-        return set.isEmpty() ? null : set.iterator().next();
-    }
-
-    /** 返回 lp 实例中值等于 target 的所有 int 声明字段 */
-    private Set<Field> intFieldsEqualTo(Class<?> clLp, Object lp, int target) {
-        Set<Field> result = new HashSet<>();
-        if (lp == null) return result;
-        try {
-            for (Field f : clLp.getDeclaredFields()) {
-                if (f.getType() != int.class) continue;
-                f.setAccessible(true);
-                if (f.getInt(lp) == target) result.add(f);
+            if (bubble == null || name == null) return;
+            try {
+                Object lp = bubble.getLayoutParams();
+                for (Field f : clLp.getDeclaredFields()) {
+                    if (f.getType() != int.class) continue;
+                    f.setAccessible(true);
+                    if (f.getInt(lp) == name.getId()) {
+                        F_topToBottom = f;
+                        break;
+                    }
+                }
+            } catch (Throwable t) {
+                XposedBridge.log("[pocket48] derive topToBottom error: " + t);
             }
-        } catch (Throwable ignore) {
+            XposedBridge.log("[pocket48] derived topToBottom: " + (F_topToBottom != null));
         }
-        return result;
     }
 
     private int dpPx(View v, int dp) {
