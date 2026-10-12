@@ -3,6 +3,8 @@ package com.pocket48.hook;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.net.Uri;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Outline;
@@ -134,10 +136,8 @@ public class MainHook implements IXposedHookLoadPackage {
         if (sp.getBoolean("msg_time_sec", true)) {
             hookMessageTime(lp);
         }
-        XposedBridge.log("[pocket48] switch msg_text_time=" + sp.getBoolean("msg_text_time", false));
-        if (sp.getBoolean("msg_text_time", false)) {
-            hookTextTime(lp);
-        }
+        // 文本内时间：无条件注册 hook，开关在 onBind 时通过 ContentProvider 动态读取（解决 XSharedPreferences 读不到新值的问题）
+        hookTextTime(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
         }
@@ -532,10 +532,12 @@ public class MainHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
+                        View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
+                        if (!(itemView instanceof View)) return;
+                        if (!readSwitch(itemView.getContext(), "msg_text_time", false)) return;
                         Date createdAt = (Date) XposedHelpers.callMethod(param.args[0], "getCreatedAt");
                         if (createdAt == null) return;
                         String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
-                        View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
                         TextView text = (TextView) itemView.findViewById(ID_MSG_TEXT);
                         if (text == null) {
                             XposedBridge.log("[pocket48] text time: messageText not found");
@@ -554,6 +556,30 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook text time error: " + t);
         }
+    }
+
+    /** 通过 ContentProvider 读取模块开关（XSharedPreferences 读不到新值时兜底） */
+    private boolean readSwitch(Context ctx, String key, boolean def) {
+        try {
+            Cursor c = ctx.getContentResolver().query(
+                    Uri.parse("content://com.pocket48.hook.config"), null, null, null, null);
+            if (c != null) {
+                try {
+                    int ki = c.getColumnIndex("key");
+                    int vi = c.getColumnIndex("value");
+                    while (c.moveToNext()) {
+                        if (key.equals(c.getString(ki))) {
+                            return "true".equals(c.getString(vi));
+                        }
+                    }
+                } finally {
+                    c.close();
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] read switch error: " + t);
+        }
+        return def;
     }
 
     /**
