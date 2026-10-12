@@ -538,7 +538,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 tv = new TextView(root.getContext());
                 tv.setId(ID_MSG_TIME_ADD);
-                tv.setTextSize(9);
+                tv.setTextSize(8);
                 tv.setTextColor(0xFF8A8FA3);
                 tv.setGravity(android.view.Gravity.CENTER);
 
@@ -554,13 +554,13 @@ public class MainHook implements IXposedHookLoadPackage {
                 root.addView(tv, (ViewGroup.LayoutParams) lpObj);
                 // 气泡底部对齐根容器底部，时间在气泡下方会被裁剪；底部加 padding 腾出空间（紧凑化）
                 root.setPadding(root.getPaddingLeft(), root.getPaddingTop(), root.getPaddingRight(),
-                        root.getPaddingBottom() + dpPx(root, 13));
-                // 收紧 item 自带的底部外边距，减小两条消息之间的间距
+                        root.getPaddingBottom() + dpPx(root, 10));
+                // 收紧 item 自带的外边距，进一步减小两条消息之间的间距
                 ViewGroup.LayoutParams rootLp = root.getLayoutParams();
                 if (rootLp instanceof ViewGroup.MarginLayoutParams) {
                     ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) rootLp;
-                    int reduce = dpPx(root, 4);
-                    mlp.bottomMargin = Math.max(0, mlp.bottomMargin - reduce);
+                    mlp.bottomMargin = Math.max(0, mlp.bottomMargin - dpPx(root, 10));
+                    mlp.topMargin = Math.max(0, mlp.topMargin - dpPx(root, 6));
                     root.setLayoutParams(mlp);
                 }
             }
