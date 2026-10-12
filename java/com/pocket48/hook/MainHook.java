@@ -519,6 +519,9 @@ public class MainHook implements IXposedHookLoadPackage {
                         new Class[]{int.class, int.class},
                         ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 root.addView(tv, (ViewGroup.LayoutParams) lpParams);
+                // 气泡底部对齐 root 底部（item 高度=气泡底部），时间会被裁剪；增加底部 padding 留出空间
+                root.setPadding(root.getPaddingLeft(), root.getPaddingTop(), root.getPaddingRight(),
+                        root.getPaddingBottom() + dpPx(root, 18));
             }
             tv.setText(timeStr);
             // 布局完成后一次性定位（气泡未布局时保留监听等下次）
