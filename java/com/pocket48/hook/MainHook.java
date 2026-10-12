@@ -78,6 +78,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String MSG_BUBBLE = "com.pocket.snh48.base.bean.juju.BubbleInfo";
     private static final String MSG_INCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseIncomingMessageViewHolder";
     private static final String MSG_OUTCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseOutcomingMessageViewHolder";
+    private static final int ID_MSG_TIME = 0x7f0a09ed; // id/messageTime（口袋48 资源 id，运行时直接比对）
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -437,6 +438,25 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked room message time visible");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook room message time error: " + t);
+        }
+        // 兜底：不依赖签名，全局拦截 setVisibility(GONE)，命中 messageTime id 强制改可见
+        try {
+            XposedHelpers.findAndHookMethod(View.class, "setVisibility", int.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (((int) param.args[0]) != View.GONE) return;
+                        View v = (View) param.thisObject;
+                        if (v.getId() == ID_MSG_TIME) {
+                            param.args[0] = View.VISIBLE;
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked messageTime setVisibility guard");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook messageTime visibility error: " + t);
         }
     }
 
