@@ -73,6 +73,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String DF_TEMPLATE = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter$Template";
     private static final String DF_FORMAT_METHOD = "\u9dd9\u7c72\u77e1"; // 鷙籲矡 (m52138(Date, Template))
     private static final String NIM_TIME = "com.netease.nimlib.p.z";     // NIM 相对时间工具（直播间/会话时间标签）
+    // 房间消息时间 TextView 被 onBind 隐藏，需额外 Hook 改为可见
+    private static final String MSG_IMESSAGE = "com.pocket.snh48.lib.yunxin.bean.IMessage";
+    private static final String MSG_BUBBLE = "com.pocket.snh48.base.bean.juju.BubbleInfo";
+    private static final String MSG_INCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseIncomingMessageViewHolder";
+    private static final String MSG_OUTCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseOutcomingMessageViewHolder";
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -409,6 +414,29 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked NIM time to seconds");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook NIM time error: " + t);
+        }
+        // 房间消息：BaseIncoming/BaseOutcoming 的 onBind 把时间 TextView 隐藏，改为可见
+        try {
+            final Class<?> imsg = XposedHelpers.findClass(MSG_IMESSAGE, lp.classLoader);
+            final Class<?> bubble = XposedHelpers.findClass(MSG_BUBBLE, lp.classLoader);
+            XC_MethodHook visHook = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object tv = XposedHelpers.getObjectField(param.thisObject, "time");
+                        if (tv instanceof View) {
+                            ((View) tv).setVisibility(View.VISIBLE);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] room time visible error: " + t);
+                    }
+                }
+            };
+            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(MSG_INCOMING, lp.classLoader), "onBind", imsg, bubble, visHook);
+            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(MSG_OUTCOMING, lp.classLoader), "onBind", imsg, bubble, visHook);
+            XposedBridge.log("[pocket48] hooked room message time visible");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook room message time error: " + t);
         }
     }
 
