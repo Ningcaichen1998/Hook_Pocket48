@@ -15,6 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.lang.reflect.Method;
@@ -495,7 +496,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
                         View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
                         if (!(itemView instanceof ViewGroup)) return;
-                        addTimeBelowBubble((ViewGroup) itemView, timeStr, lp);
+                        addTimeBelowBubble((ViewGroup) itemView, timeStr);
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] channel time below error: " + t);
                     }
@@ -510,71 +511,45 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 在气泡容器下方动态添加（或复用）时间 TextView。
-     * 定位策略（修复复用错位/丢失）：
-     * 1. 气泡上挂常驻 OnLayoutChangeListener，气泡每次布局变化都重新定位
-     * 2. 每次 onBind 后 post 一次立即定位（复用的 item 气泡已有尺寸，不会再触发布局回调）
-     * 3. 用 setX/setY（translation）定位：ConstraintLayout 忽略无约束子 View 的 margin，约束字段又被混淆
+     * 在气泡下方显示时间（v2.18 方案：垂直 LinearLayout 包裹气泡）。
+     * 根容器是 ConstraintLayout，其约束字段（topToBottom 等）被 ProGuard 混淆成生僻字，
+     * 无法反射设置约束；setX/setY 动态定位又在复用/裁剪场景下不可靠。
+     * 因此改为：把气泡从根容器取出，包进一个垂直 LinearLayout（气泡在上、时间在下），
+     * 再放回原位置并**复用气泡原来的 LayoutParams** —— 容器继承气泡的全部约束行为，
+     * 内部用普通 LinearLayout 线性排布，完全不依赖混淆字段，也无需动态定位。
      */
-    private void addTimeBelowBubble(final ViewGroup root, String timeStr, XC_LoadPackage.LoadPackageParam lp) {
+    private void addTimeBelowBubble(ViewGroup root, String timeStr) {
         try {
             final View bubble = root.findViewById(ID_BUBBLE);
             if (bubble == null) return; // 布局无气泡容器，跳过
             TextView tv = (TextView) root.findViewById(ID_MSG_TIME_ADD);
             if (tv == null) {
+                ViewGroup parent = (ViewGroup) bubble.getParent();
+                if (parent == null) return;
+                ViewGroup.LayoutParams oldLp = bubble.getLayoutParams();
+                int index = parent.indexOfChild(bubble);
+                parent.removeView(bubble);
+
+                LinearLayout wrapper = new LinearLayout(root.getContext());
+                wrapper.setOrientation(LinearLayout.VERTICAL);
+                wrapper.addView(bubble, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
                 tv = new TextView(root.getContext());
                 tv.setId(ID_MSG_TIME_ADD);
                 tv.setTextSize(10);
                 tv.setTextColor(0xFF8A8FA3);
-                Class<?> clLp = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams", lp.classLoader);
-                Object lpParams = XposedHelpers.newInstance(clLp,
-                        new Class[]{int.class, int.class},
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                root.addView(tv, (ViewGroup.LayoutParams) lpParams);
-                // 气泡底部对齐 root 底部（item 高度=气泡底部），时间会被裁剪；增加底部 padding 留出空间
-                root.setPadding(root.getPaddingLeft(), root.getPaddingTop(), root.getPaddingRight(),
-                        root.getPaddingBottom() + dpPx(root, 18));
-                // 常驻监听：气泡每次布局变化都重新定位（复用/滚动时也生效）
-                bubble.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-                    @Override
-                    public void onLayoutChange(View v, int l, int t, int r, int b,
-                                               int ol, int ot, int or2, int ob) {
-                        try {
-                            TextView time = (TextView) root.findViewById(ID_MSG_TIME_ADD);
-                            if (time == null || v.getWidth() == 0 || v.getHeight() == 0) return;
-                            positionTime(root, v, time);
-                        } catch (Throwable ignore) {
-                        }
-                    }
-                });
+                tv.setGravity(android.view.Gravity.CENTER);
+                LinearLayout.LayoutParams timeLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                timeLp.topMargin = dpPx(root, 2);
+                wrapper.addView(tv, timeLp);
+
+                parent.addView(wrapper, index, oldLp);
             }
             tv.setText(timeStr);
-            // 绑定后立即定位一次（复用的 item 气泡已布局，不会再触发 layout change）
-            if (bubble.getWidth() > 0 && bubble.getHeight() > 0) {
-                final TextView tvFinal = tv;
-                final View bFinal = bubble;
-                tvFinal.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            positionTime(root, bFinal, tvFinal);
-                        } catch (Throwable ignore) {
-                        }
-                    }
-                });
-            }
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] add time below error: " + t);
-        }
-    }
-
-    /** 定位时间到气泡正下方、左对齐气泡（x 限制在 padding 内防左侧裁剪） */
-    private void positionTime(ViewGroup root, View bubble, TextView time) {
-        int x = Math.max(bubble.getLeft(), root.getPaddingLeft());
-        int y = bubble.getTop() + bubble.getHeight() + dpPx(root, 2);
-        if (time.getX() != x || time.getY() != y) {
-            time.setX(x);
-            time.setY(y);
         }
     }
 
