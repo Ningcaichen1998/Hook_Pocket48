@@ -82,10 +82,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String MSG_INCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseIncomingMessageViewHolder";
     private static final String MSG_OUTCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseOutcomingMessageViewHolder";
     private static final int ID_MSG_TIME = 0x7f0a09ed; // id/messageTime（口袋48 资源 id，运行时直接比对）
-    // 频道文本消息（房间）：布局无 messageTime 控件，动态把时间追加到消息文本
+    // 频道文本消息（房间）：布局无 messageTime 控件，动态在气泡外下方添加时间 TextView
     private static final String CHANNEL_TEXT_VH = "com.pocket.snh48.lib.yunxin.chatkit.messages.group.ChannelTextMsgVH";
     private static final String YUNXIN_MSG = "com.pocket.snh48.lib.yunxin.bean.YunXinMessage";
-    private static final int ID_MSG_TEXT = 0x7f0a09ec; // id/messageText
+    private static final int ID_BUBBLE = 0x7f0a01af;     // id/bubble（气泡容器）
+    private static final int ID_MSG_TIME_ADD = 0x7f7f0001; // 动态添加的时间 TextView 固定 id
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -478,7 +479,7 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook messageTime visibility error: " + t);
         }
-        // 频道文本消息（房间）：布局无 messageTime，动态把时间追加到消息文本末尾
+        // 频道文本消息（房间）：布局无 messageTime，动态在气泡外下方添加时间 TextView
         try {
             final Class<?> vh = XposedHelpers.findClass(CHANNEL_TEXT_VH, lp.classLoader);
             final Class<?> yunxinMsg = XposedHelpers.findClass(YUNXIN_MSG, lp.classLoader);
@@ -491,19 +492,50 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (createdAt == null) return;
                         String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
                         View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
-                        TextView text = (TextView) itemView.findViewById(ID_MSG_TEXT);
-                        if (text != null && !text.getText().toString().endsWith(timeStr)) {
-                            text.append("\n" + timeStr);
-                        }
+                        if (!(itemView instanceof ViewGroup)) return;
+                        addTimeBelowBubble((ViewGroup) itemView, timeStr, lp);
                     } catch (Throwable t) {
-                        XposedBridge.log("[pocket48] channel text time error: " + t);
+                        XposedBridge.log("[pocket48] channel time below error: " + t);
                     }
                 }
             });
-            XposedBridge.log("[pocket48] hooked channel text time append");
+            XposedBridge.log("[pocket48] hooked channel text time below");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook channel text time error: " + t);
         }
+    }
+
+    /** 在气泡容器下方动态添加（或复用）一个居中的时间 TextView（气泡外下方） */
+    private void addTimeBelowBubble(ViewGroup root, String timeStr, XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            TextView tv = (TextView) root.findViewById(ID_MSG_TIME_ADD);
+            if (tv == null) {
+                tv = new TextView(root.getContext());
+                tv.setId(ID_MSG_TIME_ADD);
+                tv.setTextSize(10);
+                tv.setTextColor(0xFF8A8FA3);
+                tv.setGravity(android.view.Gravity.CENTER);
+                Class<?> clLp = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams", lp.classLoader);
+                Object lpParams = XposedHelpers.newInstance(clLp,
+                        new Class[]{int.class, int.class},
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT); // 宽度 0 = match_constraint
+                XposedHelpers.setIntField(lpParams, "topToBottom", ID_BUBBLE);
+                XposedHelpers.setIntField(lpParams, "startToStart", ID_BUBBLE);
+                XposedHelpers.setIntField(lpParams, "endToEnd", ID_BUBBLE);
+                try {
+                    XposedHelpers.setIntField(lpParams, "topMargin", dpPx(root, 2));
+                } catch (Throwable ignore) {
+                }
+                root.addView(tv, (ViewGroup.LayoutParams) lpParams);
+            }
+            tv.setText(timeStr);
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] add time below error: " + t);
+        }
+    }
+
+    private int dpPx(View v, int dp) {
+        return (int) (v.getResources().getDisplayMetrics().density * dp + 0.5f);
     }
 
     /** 消息防撤回：拦截 NIM 撤回通知处理（u=单条撤回 / aa=批量撤回），消息不被删除 */
