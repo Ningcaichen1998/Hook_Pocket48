@@ -18,6 +18,7 @@ public class MainActivity extends Activity {
     public static final String KEY_ENTER = "enter_room_no_follow";
     public static final String KEY_CONTRIB = "contribution_value";
     public static final String KEY_CONTRIB_RMB = "contribution_rmb";
+    public static final String KEY_SPLASH = "skip_splash_ad";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -115,6 +116,19 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(swContribRmb);
+
+        Switch swSplash = new Switch(this);
+        swSplash.setText("去开屏广告/启动页（跳过图片视频广告直接进主页）");
+        swSplash.setTextSize(16);
+        swSplash.setTextColor(Color.BLACK);
+        swSplash.setChecked(sp.getBoolean(KEY_SPLASH, true));
+        swSplash.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton v, boolean checked) {
+                sp.edit().putBoolean(KEY_SPLASH, checked).apply();
+            }
+        });
+        root.addView(swSplash);
 
         TextView tip = new TextView(this);
         tip.setText("修改开关后，重启口袋48（或重启手机）生效");

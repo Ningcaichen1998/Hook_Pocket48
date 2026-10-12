@@ -1,6 +1,6 @@
-# Pocket48 Hook Target：https://mega.nz/file/ejZXnLZS#SyeiSGALrdlnkZYdTdehMI6nZcLZ6lJJPjf-wo8NJYw
+# Pocket48 Hook
 
-一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供六项可独立开关的功能：
+一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供七项可独立开关的功能：
 
 1. **去除流量弹框** —— 蜂窝网络下观看直播/视频时，跳过「当前是蜂窝网络播放，是否继续？」确认弹框，直接播放。
 2. **修改昵称最小字数改为 1** —— 绕过「昵称不能少于2个字」的限制，允许设置单字昵称。
@@ -8,8 +8,9 @@
 4. **进入房间免关注** —— 搜索成员点击头像进入房间时，未关注也不再弹「请先关注」，直接进入。
 5. **贡献周榜展示贡献值** —— 小偶像的「贡献周榜」里把被隐藏的贡献值列显示出来。
 6. **贡献值转人民币** —— 把贡献值换算成对应人民币数额一并展示（10 贡献值 = 1 元，如 10000 贡献值 ≈ 1000 元）。
+7. **去开屏广告/启动页** —— 跳过启动时的图片/视频开屏广告，直接进入主页。
 
-六项功能均提供**可视化设置界面**，可独立开关。
+七项功能均提供**可视化设置界面**，可独立开关。
 
 ---
 
@@ -75,9 +76,15 @@ license check failed when prepare -> license authorization failed (errorCode 536
 - **Hook 逻辑**：在「展示贡献值」的基础上，读取贡献值数字并追加一行换算结果，例如 `12345` → `12345\n≈ ¥1234.5`（整数元时不带小数）。幂等：文本已含换算结果（无法再解析为纯数字）时自动跳过。
 - **说明**：此开关默认开启（与其它开关一致），开启时会同时把贡献值列显示出来（不依赖上一项开关）。
 
-### 7. 设置界面
+### 7. 去开屏广告/启动页
 
-- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供六个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`）。
+- **Hook 目标**：`com.pocket.snh48.activity.view.splash.SplashActivity` 的 `doNext()`（接口 `ku` 方法，未混淆）。
+- **原逻辑**：启动时 `doNext()` 根据拉取的广告数据（`adType` 1=图片 / 4=视频）显示开屏广告，无广告才走 `noAdAction()` 跳主页。
+- **Hook 逻辑**：`beforeHookedMethod` 中直接调用接口方法 `noActionDo()`（清空广告数据 `f19513`/`f19514` 并跳转主页）并 `setResult(null)` 跳过原方法，从而不显示广告、直接进入主页。广告数据请求照常发出，只是返回后不再展示。
+
+### 8. 设置界面
+
+- `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供七个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`、`skip_splash_ad`）。
 - Hook 端通过 `XSharedPreferences` 跨进程读取开关，按开关决定是否注入对应 hook。
 - 切换开关后需重启口袋48（或重启手机）生效。
 
@@ -96,7 +103,7 @@ license check failed when prepare -> license authorization failed (errorCode 536
 2. 安装本模块 `Pocket48去弹框Hook.apk`。
 3. 打开 LSPosed 管理器 → 模块 → 勾选「Pocket48 Hook」→ 作用域勾选「口袋48」。
 4. 重启手机（或强制停止口袋48 后重新打开）。
-5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换六个功能开关。
+5. 打开桌面上的「口袋48 Hook 设置」图标，按需切换七个功能开关。
 
 ---
 

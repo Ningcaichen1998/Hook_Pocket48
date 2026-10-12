@@ -1,0 +1,9 @@
+# 构建产物（本地 build.sh 生成，不提交）
+build/
+*.class
+*.apk.idsig
+
+# 系统 / IDE 文件
+.DS_Store
+Thumbs.db
+*.log

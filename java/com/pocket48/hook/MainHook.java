@@ -53,6 +53,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int ID_CONTRIB_AMOUNT = 0x7f0a0fd2; // tv_contribution_amount
     private static final long CONTRIB_PER_YUAN = 10L; // 10 贡献值 = 1 元（10000 贡献值 ≈ 1000 元）
 
+    // ===== 去开屏广告/启动页 =====
+    private static final String SPLASH_ACT = "com.pocket.snh48.activity.view.splash.SplashActivity";
+    private static final String SPLASH_DO_NEXT = "doNext";      // 接口 ku 方法，未混淆
+    private static final String SPLASH_NO_ACTION = "noActionDo"; // 接口 ku 方法，清空广告数据并跳主页
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -76,6 +81,9 @@ public class MainHook implements IXposedHookLoadPackage {
         boolean contribRmb = sp.getBoolean("contribution_rmb", true);
         if (contribVal || contribRmb) {
             hookContribution(lp, contribRmb);
+        }
+        if (sp.getBoolean("skip_splash_ad", true)) {
+            hookSplashAd(lp);
         }
     }
 
@@ -238,6 +246,27 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked week contribution display (rmb=" + showRmb + ")");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook contribution error: " + t);
+        }
+    }
+
+    /** 去开屏广告：拦截 doNext()，直接走 noActionDo() 清空广告数据并跳转主页，跳过图片/视频开屏广告 */
+    private void hookSplashAd(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> splash = XposedHelpers.findClass(SPLASH_ACT, lp.classLoader);
+            XposedHelpers.findAndHookMethod(splash, SPLASH_DO_NEXT, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        XposedHelpers.callMethod(param.thisObject, SPLASH_NO_ACTION);
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] splash noActionDo error: " + t);
+                    }
+                    param.setResult(null);
+                }
+            });
+            XposedBridge.log("[pocket48] hooked splash ad skip");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook splash ad error: " + t);
         }
     }
 
