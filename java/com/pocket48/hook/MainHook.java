@@ -20,12 +20,17 @@ import android.view.ViewOutlineProvider;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -892,7 +897,9 @@ public class MainHook implements IXposedHookLoadPackage {
 
     /**
      * 频道（房间）消息防撤回：频道撤回走自定义 DELETE 消息，最终调用
-     * MessagesListAdapter.deleteById 删除本地消息，拦截它即可让撤回的消息保留。
+     * MessagesListAdapter.deleteById 删除本地消息。
+     * - 拦截 deleteById：不删除，并把消息序列化缓存到本地（持久防撤回）。
+     * - 拦截 addToStart(历史加载)：按房间恢复缓存消息，退出重进后消息仍在。
      */
     private void hookChannelAntiRevoke(XC_LoadPackage.LoadPackageParam lp) {
         try {
@@ -903,16 +910,83 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         Context ctx = currentApplication();
                         if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
+                        String id = (String) param.args[0];
+                        cacheRevokedMessage(param.thisObject, id);
                         param.setResult(null);
-                        XposedBridge.log("[pocket48] blocked channel message delete");
+                        XposedBridge.log("[pocket48] blocked channel message delete, id=" + id);
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] channel anti-revoke error: " + t);
+                    }
+                }
+            });
+            XposedHelpers.findAndHookMethod(adapter, "addToStart", java.util.List.class, boolean.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
+                        restoreRevokedMessages(param.thisObject, (List<?>) param.args[0]);
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] restore revoked error: " + t);
                     }
                 }
             });
             XposedBridge.log("[pocket48] hooked channel anti-delete");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook channel anti-delete error: " + t);
+        }
+    }
+
+    /** 缓存被撤回的消息（Java 序列化 → Base64 → SharedPreferences） */
+    private void cacheRevokedMessage(Object adapter, String id) {
+        try {
+            Object msg = XposedHelpers.callMethod(adapter, "getMessageById", id);
+            if (!(msg instanceof java.io.Serializable)) return;
+            String roomId = (String) XposedHelpers.callMethod(msg, "getRoomId");
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(msg);
+            oos.close();
+            String b64 = android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP);
+            Context ctx = currentApplication();
+            if (ctx == null) return;
+            SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
+            sp.edit().putString("msg_" + roomId + "_" + id, b64).apply();
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] cache revoked error: " + t);
+        }
+    }
+
+    /** 恢复缓存消息：只恢复当前房间（与历史消息列表第一条 roomId 一致）的消息 */
+    private void restoreRevokedMessages(Object adapter, List<?> historyList) {
+        try {
+            Context ctx = currentApplication();
+            if (ctx == null) return;
+            String curRoomId = null;
+            if (historyList != null && !historyList.isEmpty()) {
+                curRoomId = (String) XposedHelpers.callMethod(historyList.get(0), "getRoomId");
+            }
+            SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
+            Map<String, ?> all = sp.getAll();
+            for (Map.Entry<String, ?> e : all.entrySet()) {
+                String key = e.getKey();
+                if (!key.startsWith("msg_")) continue;
+                Object v = e.getValue();
+                if (!(v instanceof String)) continue;
+                if (curRoomId != null && !key.startsWith("msg_" + curRoomId + "_")) continue;
+                try {
+                    byte[] bytes = android.util.Base64.decode((String) v, android.util.Base64.NO_WRAP);
+                    ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(bytes));
+                    Object msg = ois.readObject();
+                    ois.close();
+                    if (msg != null) {
+                        XposedHelpers.callMethod(adapter, "addToEnd", msg, false);
+                    }
+                } catch (Throwable ignore) {
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] restore revoked error: " + t);
         }
     }
 
