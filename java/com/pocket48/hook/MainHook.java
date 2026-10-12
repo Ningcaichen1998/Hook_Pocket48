@@ -104,9 +104,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String REVOKE_U = "com.netease.nimlib.biz.e.k.u";
     private static final String REVOKE_AA = "com.netease.nimlib.biz.e.k.aa";
 
-    // ===== 频道顶栏 tab 过滤（公演/微博/48动态，服务端下发的 MsgTypeTab） =====
+    // ===== 频道顶栏 tab 过滤（服务端下发的 MsgTypeTab） =====
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
-    private static final String[] HIDDEN_CHANNEL_TABS = {"公演", "微博", "48动态"};
+    private static final String[] HIDDEN_CHANNEL_TABS = {"公演", "微博", "48动态", "社区公约", "青少年使用规范"};
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {

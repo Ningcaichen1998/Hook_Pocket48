@@ -165,7 +165,7 @@ public class MainActivity extends Activity {
                         prefs.edit().putBoolean(KEY_MSG_TEXT_TIME, c).apply();
                     }
                 }));
-        content.addView(buildFeatureCard("🚫", "隐藏公演/微博/48动态", "去除聚聚顶栏的公演、微博、48动态标签",
+        content.addView(buildFeatureCard("🚫", "隐藏公演/微博/48动态等", "去除聚聚顶栏的公演、微博、48动态、社区公约、青少年使用规范标签",
                 prefs.getBoolean(KEY_HIDE_TABS, true), new CompoundButton.OnCheckedChangeListener() {
                     @Override public void onCheckedChanged(CompoundButton v, boolean c) {
                         prefs.edit().putBoolean(KEY_HIDE_TABS, c).apply();
