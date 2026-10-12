@@ -53,6 +53,8 @@ public class MainHook implements IXposedHookLoadPackage {
 
     // ===== 悬浮液态玻璃底栏 =====
     private static final String MAIN_ACT = "com.pocket.snh48.activity.view.main.MainActivity";
+    private static final String MAIN_INIT_VIEWPAGER = "\u7cf4\u7c72\u8c9c\u9c45\u9c45\u7ac8\u8836"; // 糴籲貜鱅鱅竈蠶 m22493 初始化 ViewPager
+    private static final String MAIN_SWITCH_TAB = "\u7ac8\u7229\u7675\u7c72"; // 竈爩癵籲 m22490(int) 切换底栏 tab
 
     // ===== 进入房间免关注（搜索成员点进房间时跳过「请先关注」） =====
     private static final String SEARCH_CB_CLS = "com.pocket.snh48.home.ui.search.SearchActivity$\u9f98\u9f98\u7c72\u8836\u9f15"; // $龘龘籲蠶鼕
@@ -156,6 +158,8 @@ public class MainHook implements IXposedHookLoadPackage {
         hookChannelTabs(lp);
         // 退出直播直接退出（去掉小窗模式提示）：无条件注册，开关经 ContentProvider 动态读取
         hookExitLiveDirect(lp);
+        // 默认底栏 tab 改为聚聚：无条件注册，开关经 ContentProvider 动态读取
+        hookDefaultTabJuju(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
         }
@@ -690,6 +694,29 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked exit live direct");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook exit live error: " + t);
+        }
+    }
+
+    /** 打开口袋48默认选中「聚聚」底栏（index 1）：Hook 主界面初始化 ViewPager 后切到 index 1 */
+    private void hookDefaultTabJuju(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> mainAct = XposedHelpers.findClass(MAIN_ACT, lp.classLoader);
+            XposedHelpers.findAndHookMethod(mainAct, MAIN_INIT_VIEWPAGER, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "default_tab_juju", true)) return;
+                        XposedHelpers.callMethod(param.thisObject, MAIN_SWITCH_TAB, 1);
+                        XposedBridge.log("[pocket48] default tab set to juju");
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] default tab juju error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked default tab juju");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook default tab error: " + t);
         }
     }
 
