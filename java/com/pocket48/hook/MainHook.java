@@ -72,6 +72,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String DATE_FORMATTER = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter";
     private static final String DF_TEMPLATE = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter$Template";
     private static final String DF_FORMAT_METHOD = "\u9dd9\u7c72\u77e1"; // 鷙籲矡 (m52138(Date, Template))
+    private static final String NIM_TIME = "com.netease.nimlib.p.z";     // NIM 相对时间工具（直播间/会话时间标签）
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -344,7 +345,7 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 消息时间精确到秒：把 TIME 模板 "HH:mm" 改为 "HH:mm:ss" */
+    /** 消息时间精确到秒：DATE_FORMATTER 的 TIME 模板 + NIM 相对时间工具（直播间/会话时间标签） */
     private void hookMessageTime(XC_LoadPackage.LoadPackageParam lp) {
         try {
             final Class<?> df = XposedHelpers.findClass(DATE_FORMATTER, lp.classLoader);
@@ -363,9 +364,51 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            XposedBridge.log("[pocket48] hooked message time to seconds");
+            XposedBridge.log("[pocket48] hooked message time to seconds (DateFormatter)");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook message time error: " + t);
+        }
+        // NIM z 类：直播间/会话的时间标签（「晚上 07:28」「今天 20:17」）
+        try {
+            final Class<?> zCls = XposedHelpers.findClass(NIM_TIME, lp.classLoader);
+            // a(Date): 「凌晨/上午/下午/晚上 hh:mm」→ 在原结果时间部分追加秒
+            XposedHelpers.findAndHookMethod(zCls, "a", Date.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        String old = (String) param.getResult();
+                        Date d = (Date) param.args[0];
+                        if (old == null || old.length() == 0 || d == null) return;
+                        String hm = new SimpleDateFormat("hh:mm", Locale.getDefault()).format(d);
+                        if (old.endsWith(hm)) {
+                            param.setResult(old.substring(0, old.length() - hm.length())
+                                    + new SimpleDateFormat("hh:mm:ss", Locale.getDefault()).format(d));
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+            // a(long, boolean): 「今天/昨天 HH:mm」→ 追加秒（z=true 时内部走 a(Date)，已被上面覆盖）
+            XposedHelpers.findAndHookMethod(zCls, "a", long.class, boolean.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if ((Boolean) param.args[1]) return;
+                        String old = (String) param.getResult();
+                        Date d = new Date((Long) param.args[0]);
+                        if (old == null) return;
+                        String hm = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(d);
+                        if (old.endsWith(hm)) {
+                            param.setResult(old.substring(0, old.length() - hm.length())
+                                    + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(d));
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked NIM time to seconds");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook NIM time error: " + t);
         }
     }
 
