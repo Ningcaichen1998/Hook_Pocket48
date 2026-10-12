@@ -112,6 +112,10 @@ public class MainHook implements IXposedHookLoadPackage {
     // 持久防撤回：重建最小消息所需的类（UserInfo 是 Parcelable 而非 Serializable，整对象序列化会 NotSerializableException）
     private static final String USER_INFO_CLS = "com.pocket.snh48.lib.room.bean.UserInfo";
     private static final String SEP = "\u0001"; // 缓存字段分隔符（控制字符，聊天文本不会出现）
+    // 频道 Fragment（C4919）：切换/进入房间方法，用于记录准确的当前房间 id（与实时消息 roomId/sessionId 一致）
+    private static final String CHANNEL_FRAGMENT = "com.pocket.snh48.activity.\u7675\u7c72\u7229\u9c45\u7c72\u9c45\u9f98\u9f98"; // C4919
+    private static final String CHANNEL_SWITCH_ROOM = "\u7675\u7675\u9f15"; // m26065(String) 切换房间
+    private static volatile String currentRoomId = ""; // 当前房间 id（m26065 记录）
 
     // ===== 频道顶栏 tab 过滤（服务端下发的 MsgTypeTab） =====
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
@@ -904,6 +908,24 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             final Class<?> adapter = XposedHelpers.findClass(MSG_LIST_ADAPTER, lp.classLoader);
             final ClassLoader cl = lp.classLoader;
+            // 记录准确的「当前房间 id」（切换/进入房间时触发），用于恢复时精确按房间匹配，避免跨房间污染
+            try {
+                XposedHelpers.findAndHookMethod(XposedHelpers.findClass(CHANNEL_FRAGMENT, cl), CHANNEL_SWITCH_ROOM, String.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            String roomId = (String) param.args[0];
+                            if (roomId != null && !roomId.isEmpty()) {
+                                currentRoomId = roomId;
+                                XposedBridge.log("[pocket48] channel room switched: " + roomId);
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+            } catch (Throwable t) {
+                XposedBridge.log("[pocket48] hook room switch error: " + t);
+            }
             XposedHelpers.findAndHookMethod(adapter, "deleteById", String.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -979,13 +1001,10 @@ public class MainHook implements IXposedHookLoadPackage {
             Context ctx = currentApplication();
             if (ctx == null) return;
             SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
-            sp.edit().putString("msg_" + roomId + "_" + id, value).apply();
-            if (!roomId.isEmpty()) {
-                // 实时消息 roomId 有值（sessionId/channelId），历史消息 roomId 为空；
-                // 记录最后删除的房间，供恢复时兜底匹配
-                sp.edit().putString("last_room", roomId).apply();
-            }
-            XposedBridge.log("[pocket48] cached revoked: id=" + id + " room=" + roomId + " type=" + messageType);
+            // 被撤回的历史消息 roomId 可能为空，用「当前房间 id」兜底作为 key 前缀
+            String keyRoom = roomId.isEmpty() ? currentRoomId : roomId;
+            sp.edit().putString("msg_" + keyRoom + "_" + id, value).apply();
+            XposedBridge.log("[pocket48] cached revoked: id=" + id + " room=" + keyRoom + " type=" + messageType);
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] cache revoked error: " + t);
         }
@@ -997,14 +1016,13 @@ public class MainHook implements IXposedHookLoadPackage {
             Context ctx = currentApplication();
             if (ctx == null) return;
             SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
-            String curRoomId = null;
-            if (historyList != null && !historyList.isEmpty()) {
-                curRoomId = str(XposedHelpers.callMethod(historyList.get(0), "getRoomId"));
-            }
+            // 用「当前房间 id」（m26065 记录，与实时消息 roomId 一致）精确匹配，避免跨房间污染
+            String curRoomId = currentRoomId;
             if (curRoomId == null || curRoomId.isEmpty()) {
-                // 历史消息（parseChannelHistoryMsg）不设置 roomId，恒为空；
-                // 用「最后删除的房间」兜底匹配
-                curRoomId = sp.getString("last_room", "");
+                // 兜底：历史消息 roomId（parseChannelHistoryMsg 通常不设，恒空）
+                if (historyList != null && !historyList.isEmpty()) {
+                    curRoomId = str(XposedHelpers.callMethod(historyList.get(0), "getRoomId"));
+                }
             }
             Map<String, ?> all = sp.getAll();
             XposedBridge.log("[pocket48] restore check: curRoomId=" + curRoomId + " cached=" + all.size());
