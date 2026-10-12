@@ -87,6 +87,7 @@ license check failed when prepare -> license authorization failed (errorCode 536
 - `MainActivity`（带桌面图标，LSPosed 管理器内亦可打开），提供七个开关，状态写入 SharedPreferences（key：`play_flow`、`nick_min`、`glass_bottom`、`enter_room_no_follow`、`contribution_value`、`contribution_rmb`、`skip_splash_ad`）。
 - Hook 端通过 `XSharedPreferences` 跨进程读取开关，按开关决定是否注入对应 hook。
 - 切换开关后需重启口袋48（或重启手机）生效。
+- 界面为卡片式布局（圆角卡片 + 功能图标 + 标题/副标题 + 开关），支持**自定义背景图**：点击「更换图片」从相册选择一张图作为设置界面背景（复制到模块私有目录，图片自动缩放避免 OOM），「恢复默认」还原为浅色渐变。
 
 ---
 

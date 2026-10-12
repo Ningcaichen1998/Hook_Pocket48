@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.pocket48.hook"
-    android:versionCode="13"
-    android:versionName="2.2">
+    android:versionCode="14"
+    android:versionName="2.3">
 
     <application
         android:label="Pocket48 Hook"
@@ -24,7 +24,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="去除流量弹框、修改昵称最小字数、悬浮液态玻璃底栏、进入房间免关注、贡献周榜展示贡献值、贡献值转人民币、去开屏广告/启动页" />
+            android:value="去除流量弹框、修改昵称最小字数、悬浮液态玻璃底栏、进入房间免关注、贡献周榜展示贡献值、贡献值转人民币、去开屏广告、精美设置界面、自定义背景图" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
