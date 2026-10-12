@@ -82,6 +82,10 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String MSG_INCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseIncomingMessageViewHolder";
     private static final String MSG_OUTCOMING = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessageHolders$BaseOutcomingMessageViewHolder";
     private static final int ID_MSG_TIME = 0x7f0a09ed; // id/messageTime（口袋48 资源 id，运行时直接比对）
+    // 频道文本消息（房间）：布局无 messageTime 控件，动态把时间追加到消息文本
+    private static final String CHANNEL_TEXT_VH = "com.pocket.snh48.lib.yunxin.chatkit.messages.group.ChannelTextMsgVH";
+    private static final String YUNXIN_MSG = "com.pocket.snh48.lib.yunxin.bean.YunXinMessage";
+    private static final int ID_MSG_TEXT = 0x7f0a09ec; // id/messageText
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -473,6 +477,32 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked messageTime setVisibility guard");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook messageTime visibility error: " + t);
+        }
+        // 频道文本消息（房间）：布局无 messageTime，动态把时间追加到消息文本末尾
+        try {
+            final Class<?> vh = XposedHelpers.findClass(CHANNEL_TEXT_VH, lp.classLoader);
+            final Class<?> yunxinMsg = XposedHelpers.findClass(YUNXIN_MSG, lp.classLoader);
+            final Class<?> bubble = XposedHelpers.findClass(MSG_BUBBLE, lp.classLoader);
+            XposedHelpers.findAndHookMethod(vh, "onBind", yunxinMsg, bubble, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Date createdAt = (Date) XposedHelpers.callMethod(param.args[0], "getCreatedAt");
+                        if (createdAt == null) return;
+                        String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
+                        View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
+                        TextView text = (TextView) itemView.findViewById(ID_MSG_TEXT);
+                        if (text != null && !text.getText().toString().endsWith(timeStr)) {
+                            text.append("\n" + timeStr);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] channel text time error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked channel text time append");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook channel text time error: " + t);
         }
     }
 
