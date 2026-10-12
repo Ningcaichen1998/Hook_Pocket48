@@ -924,6 +924,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         Context ctx = currentApplication();
+                        int n = param.args[0] == null ? -1 : ((List<?>) param.args[0]).size();
+                        XposedBridge.log("[pocket48] addToStart triggered, size=" + n + " switch=" + readSwitch(ctx, "msg_anti_revoke", true));
                         if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
                         restoreRevokedMessages(cl, param.thisObject, (List<?>) param.args[0]);
                     } catch (Throwable t) {
@@ -1004,8 +1006,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 // 用「最后删除的房间」兜底匹配
                 curRoomId = sp.getString("last_room", "");
             }
-            if (curRoomId == null || curRoomId.isEmpty()) return; // 无法确定房间，跳过
             Map<String, ?> all = sp.getAll();
+            XposedBridge.log("[pocket48] restore check: curRoomId=" + curRoomId + " cached=" + all.size());
+            if (curRoomId == null || curRoomId.isEmpty()) return; // 无法确定房间，跳过
             for (Map.Entry<String, ?> e : all.entrySet()) {
                 String key = e.getKey();
                 if (!key.startsWith("msg_" + curRoomId + "_")) continue;
