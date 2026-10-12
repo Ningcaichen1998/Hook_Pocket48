@@ -12,6 +12,12 @@
 
 七项功能均提供**可视化设置界面**，可独立开关。
 
+## 适配版本
+
+- **适配原版**：口袋48 **v7.1.44**（`pocket48_v7.1.44_b26092001_x64_20260920_01.apk`）
+- **原版下载**：https://mega.nz/file/ejZXnLZS#SyeiSGALrdlnkZYdTdehMI6nZcLZ6lJJPjf-wo8NJYw
+- 请安装上述**原版签名** APK 后再安装本模块；若使用重签名/修改版，直播会因 License 校验失败而黑屏（详见下文「为什么用 Hook 方案」）。
+
 ---
 
 ## 为什么用 Hook 方案，而不是改 APK 重打包

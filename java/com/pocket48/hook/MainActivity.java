@@ -178,6 +178,13 @@ public class MainActivity extends Activity {
         sub.setTextColor(0xB3FFFFFF);
         sub.setPadding(0, dp(4), 0, 0);
         header.addView(sub);
+
+        TextView ver = new TextView(this);
+        ver.setText("适配版本：口袋48 v7.1.44 (26092001)");
+        ver.setTextSize(11);
+        ver.setTextColor(0x8CFFFFFF);
+        ver.setPadding(0, dp(2), 0, 0);
+        header.addView(ver);
         return header;
     }
 
