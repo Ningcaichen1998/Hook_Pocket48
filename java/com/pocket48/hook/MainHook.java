@@ -106,6 +106,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String REVOKE_A = "com.netease.nimlib.biz.e.a";
     private static final String REVOKE_U = "com.netease.nimlib.biz.e.k.u";
     private static final String REVOKE_AA = "com.netease.nimlib.biz.e.k.aa";
+    // 频道（房间）消息撤回走自定义 DELETE 消息 → MessagesListAdapter.deleteById
+    private static final String MSG_LIST_ADAPTER = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessagesListAdapter";
 
     // ===== 频道顶栏 tab 过滤（服务端下发的 MsgTypeTab） =====
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
@@ -162,6 +164,7 @@ public class MainHook implements IXposedHookLoadPackage {
         hookDefaultTabJuju(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
+            hookChannelAntiRevoke(lp);
         }
     }
 
@@ -884,6 +887,32 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked message anti-revoke");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook anti-revoke error: " + t);
+        }
+    }
+
+    /**
+     * 频道（房间）消息防撤回：频道撤回走自定义 DELETE 消息，最终调用
+     * MessagesListAdapter.deleteById 删除本地消息，拦截它即可让撤回的消息保留。
+     */
+    private void hookChannelAntiRevoke(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> adapter = XposedHelpers.findClass(MSG_LIST_ADAPTER, lp.classLoader);
+            XposedHelpers.findAndHookMethod(adapter, "deleteById", String.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
+                        param.setResult(null);
+                        XposedBridge.log("[pocket48] blocked channel message delete");
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] channel anti-revoke error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked channel anti-delete");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook channel anti-delete error: " + t);
         }
     }
 
