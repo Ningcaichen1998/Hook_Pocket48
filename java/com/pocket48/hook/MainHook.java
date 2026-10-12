@@ -90,6 +90,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int ID_BUBBLE = 0x7f0a01af;     // id/bubble（气泡容器）
     private static final int ID_MSG_TIME_ADD = 0x7f7f0001; // 动态添加的时间 TextView 固定 id
     private static final int ID_NAME = 0x7f0a13a0;        // 昵称 TextView（气泡 topToBottom 指向它，用于反推字段）
+    private static final int ID_MSG_TEXT = 0x7f0a09ec;    // id/messageText（文本消息内容）
 
     // 运行时反推出的 ConstraintLayout.LayoutParams 混淆约束字段（缓存）
     private static volatile Field F_topToBottom;
@@ -132,6 +133,9 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         if (sp.getBoolean("msg_time_sec", true)) {
             hookMessageTime(lp);
+        }
+        if (sp.getBoolean("msg_text_time", false)) {
+            hookTextTime(lp);
         }
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
@@ -511,6 +515,41 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked channel text/image time below");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook channel time error: " + t);
+        }
+    }
+
+    /**
+     * 消息文本内写入时间（可选开关 msg_text_time）：把发送时间追加到文本消息末尾（气泡内）。
+     * 与气泡外显示时间（msg_time_sec）相互独立，用户自行选择。
+     */
+    private void hookTextTime(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> vhText = XposedHelpers.findClass(CHANNEL_TEXT_VH, lp.classLoader);
+            final Class<?> yunxinMsg = XposedHelpers.findClass(YUNXIN_MSG, lp.classLoader);
+            final Class<?> bubbleCls = XposedHelpers.findClass(MSG_BUBBLE, lp.classLoader);
+            XposedHelpers.findAndHookMethod(vhText, "onBind", yunxinMsg, bubbleCls, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Date createdAt = (Date) XposedHelpers.callMethod(param.args[0], "getCreatedAt");
+                        if (createdAt == null) return;
+                        String timeStr = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(createdAt);
+                        View itemView = (View) XposedHelpers.getObjectField(param.thisObject, "itemView");
+                        TextView text = (TextView) itemView.findViewById(ID_MSG_TEXT);
+                        if (text != null) {
+                            String cur = text.getText().toString();
+                            if (!cur.endsWith(timeStr)) {
+                                text.append("\n" + timeStr);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] text time error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked channel text time append");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook text time error: " + t);
         }
     }
 

@@ -38,6 +38,7 @@ public class MainActivity extends Activity {
     public static final String KEY_SPLASH = "skip_splash_ad";
     public static final String KEY_CHECKIN = "auto_checkin";
     public static final String KEY_MSG_TIME = "msg_time_sec";
+    public static final String KEY_MSG_TEXT_TIME = "msg_text_time";
     public static final String KEY_MSG_REVOKE = "msg_anti_revoke";
 
     private static final int REQ_PICK_BG = 1001;
@@ -155,6 +156,12 @@ public class MainActivity extends Activity {
                 prefs.getBoolean(KEY_MSG_TIME, true), new CompoundButton.OnCheckedChangeListener() {
                     @Override public void onCheckedChanged(CompoundButton v, boolean c) {
                         prefs.edit().putBoolean(KEY_MSG_TIME, c).apply();
+                    }
+                }));
+        content.addView(buildFeatureCard("⏱️", "消息文本内写入时间", "把发送时间写入文本消息末尾（气泡内）",
+                prefs.getBoolean(KEY_MSG_TEXT_TIME, false), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton v, boolean c) {
+                        prefs.edit().putBoolean(KEY_MSG_TEXT_TIME, c).apply();
                     }
                 }));
         content.addView(buildFeatureCard("🛡️", "消息防撤回", "对方撤回的消息保留不消失",
