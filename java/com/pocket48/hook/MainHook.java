@@ -72,7 +72,10 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String DATE_FORMATTER = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter";
     private static final String DF_TEMPLATE = "com.pocket.snh48.lib.yunxin.chatkit.utils.DateFormatter$Template";
     private static final String DF_FORMAT_METHOD = "\u9dd9\u7c72\u77e1"; // 鷙籲矡 (m52138(Date, Template))
-    private static final String NIM_TIME = "com.netease.nimlib.p.z";     // NIM 相对时间工具（直播间/会话时间标签）
+    private static final String NIM_TIME = "com.netease.nimlib.p.z";     // NIM 相对时间工具
+    private static final String TIME_I9 = "com.pocket.snh48.activity.i9"; // 口袋48 自有时间工具（房间时间标签真正来源）
+    private static final String I9_SEG_METHOD = "\u8836\u9b1a\u8c9c\u7cf4\u9dd9\u7229\u77e1";   // 蠶鬚貜糴鷙爩矡 (m17247(Date)「凌晨/上午/下午/晚上 hh:mm」)
+    private static final String I9_DAY_METHOD = "\u7c3e\u7229\u98b1\u9dd9\u9f98\u9dd9\u9dd9\u7c72"; // 簾爩颱鷙龘鷙鷙籲 (m17238(long,boolean)「今天/昨天 HH:mm」)
     // 房间消息时间 TextView 被 onBind 隐藏，需额外 Hook 改为可见
     private static final String MSG_IMESSAGE = "com.pocket.snh48.lib.yunxin.bean.IMessage";
     private static final String MSG_BUBBLE = "com.pocket.snh48.base.bean.juju.BubbleInfo";
@@ -374,40 +377,26 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook message time error: " + t);
         }
-        // NIM z 类：直播间/会话的时间标签（「晚上 07:28」「今天 20:17」）
+        // NIM z 类：时间标签（「晚上 hh:mm」「今天 HH:mm」）
         try {
             final Class<?> zCls = XposedHelpers.findClass(NIM_TIME, lp.classLoader);
-            // a(Date): 「凌晨/上午/下午/晚上 hh:mm」→ 在原结果时间部分追加秒
+            // a(Date): 「凌晨/上午 KK:mm」「下午/晚上 hh:mm」→ 追加秒
             XposedHelpers.findAndHookMethod(zCls, "a", Date.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
-                        String old = (String) param.getResult();
-                        Date d = (Date) param.args[0];
-                        if (old == null || old.length() == 0 || d == null) return;
-                        String hm = new SimpleDateFormat("hh:mm", Locale.getDefault()).format(d);
-                        if (old.endsWith(hm)) {
-                            param.setResult(old.substring(0, old.length() - hm.length())
-                                    + new SimpleDateFormat("hh:mm:ss", Locale.getDefault()).format(d));
-                        }
+                        appendSeconds(param, (Date) param.args[0], "KK:mm", "hh:mm");
                     } catch (Throwable ignore) {
                     }
                 }
             });
-            // a(long, boolean): 「今天/昨天 HH:mm」→ 追加秒（z=true 时内部走 a(Date)，已被上面覆盖）
+            // a(long, boolean): 「今天/昨天 HH:mm」→ 追加秒（z=true 今天时内部走 a(Date)，已被上面覆盖）
             XposedHelpers.findAndHookMethod(zCls, "a", long.class, boolean.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         if ((Boolean) param.args[1]) return;
-                        String old = (String) param.getResult();
-                        Date d = new Date((Long) param.args[0]);
-                        if (old == null) return;
-                        String hm = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(d);
-                        if (old.endsWith(hm)) {
-                            param.setResult(old.substring(0, old.length() - hm.length())
-                                    + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(d));
-                        }
+                        appendSeconds(param, new Date((Long) param.args[0]), "HH:mm", null);
                     } catch (Throwable ignore) {
                     }
                 }
@@ -415,6 +404,33 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked NIM time to seconds");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook NIM time error: " + t);
+        }
+        // i9 类：口袋48 自有时间工具，房间时间标签的真正来源
+        try {
+            final Class<?> i9 = XposedHelpers.findClass(TIME_I9, lp.classLoader);
+            // m17247(Date): 「凌晨/上午 KK:mm」「下午/晚上 hh:mm」
+            XposedHelpers.findAndHookMethod(i9, I9_SEG_METHOD, Date.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        appendSeconds(param, (Date) param.args[0], "KK:mm", "hh:mm");
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+            // m17238(long, boolean): 「今天/昨天/星期/日期 HH:mm」（z=true 今天时内部走 m17247，已被上面覆盖）
+            XposedHelpers.findAndHookMethod(i9, I9_DAY_METHOD, long.class, boolean.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        appendSeconds(param, new Date((Long) param.args[0]), "HH:mm", null);
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked i9 time to seconds");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook i9 time error: " + t);
         }
         // 房间消息：BaseIncoming/BaseOutcoming 的 onBind 把时间 TextView 隐藏，改为可见
         try {
@@ -484,6 +500,21 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked message anti-revoke");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook anti-revoke error: " + t);
+        }
+    }
+
+    /** 通用：把 hook 结果尾部的时间部分（pattern 匹配，如「晚上 08:14」的 08:14）替换为带秒版本 */
+    private static void appendSeconds(XC_MethodHook.MethodHookParam param, Date d, String p1, String p2) {
+        String old = (String) param.getResult();
+        if (old == null || old.length() < 5 || d == null) return;
+        String[] pats = p2 == null ? new String[]{p1} : new String[]{p1, p2};
+        for (String p : pats) {
+            String hm = new SimpleDateFormat(p, Locale.getDefault()).format(d);
+            if (hm.length() > 0 && old.endsWith(hm)) {
+                String withSec = new SimpleDateFormat(p + ":ss", Locale.getDefault()).format(d);
+                param.setResult(old.substring(0, old.length() - hm.length()) + withSec);
+                return;
+            }
         }
     }
 
