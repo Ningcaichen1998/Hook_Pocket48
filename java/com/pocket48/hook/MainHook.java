@@ -23,6 +23,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -103,6 +104,10 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String REVOKE_U = "com.netease.nimlib.biz.e.k.u";
     private static final String REVOKE_AA = "com.netease.nimlib.biz.e.k.aa";
 
+    // ===== 频道顶栏 tab 过滤（公演/微博/48动态，服务端下发的 MsgTypeTab） =====
+    private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
+    private static final String[] HIDDEN_CHANNEL_TABS = {"公演", "微博", "48动态"};
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!PKG.equals(lp.packageName)) {
@@ -138,6 +143,8 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         // 文本内时间：无条件注册 hook，开关在 onBind 时通过 ContentProvider 动态读取（解决 XSharedPreferences 读不到新值的问题）
         hookTextTime(lp);
+        // 频道顶栏 tab 过滤：无条件注册，开关在 setter 时通过 ContentProvider 动态读取
+        hookChannelTabs(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
         }
@@ -555,6 +562,63 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[pocket48] hooked channel text time append");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook text time error: " + t);
+        }
+    }
+
+    /**
+     * 频道顶栏 tab 过滤：把「公演/微博/48动态」从服务端下发的 tab 列表中移除。
+     * Hook ChannelTabWraper 的三个 setter（setChannels/setMySortedChannels/setSpecialTab），
+     * 在数据源头过滤（下游 m48577 会强制 setShow(true)，不能靠 show 字段）。
+     * 开关通过 ContentProvider 动态读取（改开关即时生效，无需重启）。
+     */
+    private void hookChannelTabs(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            final Class<?> wraper = XposedHelpers.findClass(CHANNEL_TAB_WRAPER, lp.classLoader);
+            XC_MethodHook filterHook = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "hide_channel_tabs", true)) return;
+                        if (!(param.args[0] instanceof List)) return;
+                        List<?> list = (List<?>) param.args[0];
+                        java.util.Iterator<?> it = list.iterator();
+                        while (it.hasNext()) {
+                            Object tab = it.next();
+                            Object name = XposedHelpers.callMethod(tab, "getName");
+                            if (name != null) {
+                                for (String hidden : HIDDEN_CHANNEL_TABS) {
+                                    if (hidden.equals(name)) {
+                                        it.remove();
+                                        XposedBridge.log("[pocket48] removed channel tab: " + name);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] channel tab filter error: " + t);
+                    }
+                }
+            };
+            for (String setter : new String[]{"setChannels", "setMySortedChannels", "setSpecialTab"}) {
+                XposedHelpers.findAndHookMethod(wraper, setter, java.util.List.class, filterHook);
+            }
+            XposedBridge.log("[pocket48] hooked channel tab filter");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook channel tabs error: " + t);
+        }
+    }
+
+    /** 反射获取当前进程 Application（xposed-api 精简版无 AndroidAppHelper） */
+    private Context currentApplication() {
+        try {
+            Object at = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null), "currentActivityThread");
+            if (at == null) return null;
+            return (Context) XposedHelpers.callMethod(at, "getApplication");
+        } catch (Throwable t) {
+            return null;
         }
     }
 
