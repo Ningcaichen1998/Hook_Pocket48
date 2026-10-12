@@ -1,4 +1,4 @@
-# Pocket48 Hook Target；https://mega.nz/file/ejZXnLZS#SyeiSGALrdlnkZYdTdehMI6nZcLZ6lJJPjf-wo8NJYw
+# Pocket48 Hook Target：https://mega.nz/file/ejZXnLZS#SyeiSGALrdlnkZYdTdehMI6nZcLZ6lJJPjf-wo8NJYw
 
 一个针对口袋48（SNH48 官方粉丝应用，包名 `com.pocket.snh48.activity`）的 **LSPosed / Xposed 模块**，提供六项可独立开关的功能：
 
