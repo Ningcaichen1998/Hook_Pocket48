@@ -505,8 +505,8 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 在气泡容器下方动态添加（或复用）一个居中的时间 TextView（气泡外下方） */
-    private void addTimeBelowBubble(ViewGroup root, String timeStr, XC_LoadPackage.LoadPackageParam lp) {
+    /** 在气泡容器下方动态添加（或复用）时间 TextView，用 margin 定位（不依赖混淆的约束字段） */
+    private void addTimeBelowBubble(final ViewGroup root, String timeStr, XC_LoadPackage.LoadPackageParam lp) {
         try {
             TextView tv = (TextView) root.findViewById(ID_MSG_TIME_ADD);
             if (tv == null) {
@@ -514,21 +514,32 @@ public class MainHook implements IXposedHookLoadPackage {
                 tv.setId(ID_MSG_TIME_ADD);
                 tv.setTextSize(10);
                 tv.setTextColor(0xFF8A8FA3);
-                tv.setGravity(android.view.Gravity.CENTER);
                 Class<?> clLp = XposedHelpers.findClass("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams", lp.classLoader);
                 Object lpParams = XposedHelpers.newInstance(clLp,
                         new Class[]{int.class, int.class},
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT); // 宽度 0 = match_constraint
-                XposedHelpers.setIntField(lpParams, "topToBottom", ID_BUBBLE);
-                XposedHelpers.setIntField(lpParams, "startToStart", ID_BUBBLE);
-                XposedHelpers.setIntField(lpParams, "endToEnd", ID_BUBBLE);
-                try {
-                    XposedHelpers.setIntField(lpParams, "topMargin", dpPx(root, 2));
-                } catch (Throwable ignore) {
-                }
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 root.addView(tv, (ViewGroup.LayoutParams) lpParams);
             }
             tv.setText(timeStr);
+            final View bubble = root.findViewById(ID_BUBBLE);
+            final TextView tvFinal = tv;
+            if (bubble != null) {
+                bubble.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            int[] bl = new int[2], rl = new int[2];
+                            bubble.getLocationInWindow(bl);
+                            root.getLocationInWindow(rl);
+                            ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) tvFinal.getLayoutParams();
+                            mlp.leftMargin = bl[0] - rl[0];
+                            mlp.topMargin = bl[1] - rl[1] + bubble.getHeight() + dpPx(root, 2);
+                            tvFinal.setLayoutParams(mlp);
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+            }
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] add time below error: " + t);
         }
