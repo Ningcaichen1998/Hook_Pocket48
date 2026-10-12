@@ -608,6 +608,43 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook channel tabs error: " + t);
         }
+        // 均分铺满：tab 减少后剩余 tab 等宽占满整行（标题 TextView 已有 left+right 居中约束，自动居中）
+        try {
+            final Class<?> binder = XposedHelpers.findClass("com.pocket.snh48.activity.鬚爩竈蠶鷙鼕鷙", lp.classLoader);
+            final Class<?> holder = XposedHelpers.findClass("com.pocket.snh48.activity.鬚爩竈蠶鷙鼕鷙$簾籲蠶爩", lp.classLoader);
+            final Class<?> msgTab = XposedHelpers.findClass("com.pocket.snh48.lib.yunxin.bean.chat.MsgTypeTab", lp.classLoader);
+            XposedHelpers.findAndHookMethod(binder, "竈貜籲糴", holder, msgTab, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "hide_channel_tabs", true)) return;
+                        View itemView = (View) XposedHelpers.getObjectField(param.args[0], "itemView");
+                        View parent = (View) itemView.getParent();
+                        if (parent == null) return;
+                        int rvW = parent.getWidth() - parent.getPaddingLeft() - parent.getPaddingRight();
+                        Object adapter = XposedHelpers.callMethod(parent, "getAdapter");
+                        if (adapter == null || rvW <= 0) return;
+                        int count = ((Number) XposedHelpers.callMethod(adapter, "getItemCount")).intValue();
+                        if (count <= 0) return;
+                        int w = rvW / count;
+                        ViewGroup.LayoutParams lp = itemView.getLayoutParams();
+                        if (lp != null && lp.width != w) {
+                            lp.width = w;
+                            itemView.setLayoutParams(lp);
+                        }
+                        if (itemView.getPaddingLeft() != 0 || itemView.getPaddingRight() != 0) {
+                            itemView.setPadding(0, itemView.getPaddingTop(), 0, itemView.getPaddingBottom());
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] tab equal width error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked channel tab equal width");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook tab width error: " + t);
+        }
     }
 
     /** 反射获取当前进程 Application（xposed-api 精简版无 AndroidAppHelper） */
