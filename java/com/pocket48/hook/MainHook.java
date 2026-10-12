@@ -20,10 +20,6 @@ import android.view.ViewOutlineProvider;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
@@ -113,6 +109,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String REVOKE_AA = "com.netease.nimlib.biz.e.k.aa";
     // 频道（房间）消息撤回走自定义 DELETE 消息 → MessagesListAdapter.deleteById
     private static final String MSG_LIST_ADAPTER = "com.pocket.snh48.lib.yunxin.chatkit.messages.MessagesListAdapter";
+    // 持久防撤回：重建最小消息所需的类（UserInfo 是 Parcelable 而非 Serializable，整对象序列化会 NotSerializableException）
+    private static final String USER_INFO_CLS = "com.pocket.snh48.lib.room.bean.UserInfo";
+    private static final String SEP = "\u0001"; // 缓存字段分隔符（控制字符，聊天文本不会出现）
 
     // ===== 频道顶栏 tab 过滤（服务端下发的 MsgTypeTab） =====
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
@@ -904,6 +903,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private void hookChannelAntiRevoke(XC_LoadPackage.LoadPackageParam lp) {
         try {
             final Class<?> adapter = XposedHelpers.findClass(MSG_LIST_ADAPTER, lp.classLoader);
+            final ClassLoader cl = lp.classLoader;
             XposedHelpers.findAndHookMethod(adapter, "deleteById", String.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -911,7 +911,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         Context ctx = currentApplication();
                         if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
                         String id = (String) param.args[0];
-                        cacheRevokedMessage(param.thisObject, id);
+                        cacheRevokedMessage(cl, param.thisObject, id);
                         param.setResult(null);
                         XposedBridge.log("[pocket48] blocked channel message delete, id=" + id);
                     } catch (Throwable t) {
@@ -925,7 +925,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         Context ctx = currentApplication();
                         if (ctx == null || !readSwitch(ctx, "msg_anti_revoke", true)) return;
-                        restoreRevokedMessages(param.thisObject, (List<?>) param.args[0]);
+                        restoreRevokedMessages(cl, param.thisObject, (List<?>) param.args[0]);
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] restore revoked error: " + t);
                     }
@@ -937,57 +937,124 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 缓存被撤回的消息（Java 序列化 → Base64 → SharedPreferences） */
-    private void cacheRevokedMessage(Object adapter, String id) {
+    /**
+     * 缓存被撤回的消息：只抽取关键字段存为分隔字符串（SharedPreferences）。
+     * 注意：YunXinMessage 的 user 字段是 UserInfo（Parcelable 非 Serializable），
+     * 整对象 Java 序列化会抛 NotSerializableException，故不能用 ObjectOutputStream。
+     */
+    private void cacheRevokedMessage(ClassLoader cl, Object adapter, String id) {
         try {
             Object msg = XposedHelpers.callMethod(adapter, "getMessageById", id);
-            if (!(msg instanceof java.io.Serializable)) return;
-            String roomId = (String) XposedHelpers.callMethod(msg, "getRoomId");
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            ObjectOutputStream oos = new ObjectOutputStream(bos);
-            oos.writeObject(msg);
-            oos.close();
-            String b64 = android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP);
+            if (msg == null) {
+                XposedBridge.log("[pocket48] cache revoked: message not found, id=" + id);
+                return;
+            }
+            String roomId = str(XposedHelpers.callMethod(msg, "getRoomId"));
+            String messageType = str(XposedHelpers.callMethod(msg, "getMessageType"));
+            String text = str(XposedHelpers.callMethod(msg, "getText"));
+            if (text.isEmpty()) text = str(XposedHelpers.callMethod(msg, "getContent"));
+            Date createdAt = (Date) XposedHelpers.callMethod(msg, "getCreatedAt");
+            long created = createdAt == null ? 0L : createdAt.getTime();
+            String fromAccount = str(XposedHelpers.callMethod(msg, "getFromAccount"));
+            String userId = str(XposedHelpers.callMethod(msg, "getUserId"));
+            long userUid = 0L;
+            String nickname = "";
+            String avatar = "";
+            Object user = XposedHelpers.callMethod(msg, "getUser");
+            if (user != null) {
+                try {
+                    Object uid = XposedHelpers.callMethod(user, "getUserId");
+                    userUid = uid instanceof Number ? ((Number) uid).longValue() : 0L;
+                } catch (Throwable ignore) {
+                }
+                nickname = str(XposedHelpers.callMethod(user, "getNickname"));
+                if (nickname.isEmpty()) nickname = str(XposedHelpers.callMethod(user, "getNickName"));
+                avatar = str(XposedHelpers.callMethod(user, "getAvatar"));
+            }
+            String value = String.join(SEP,
+                    id, roomId, messageType, text, String.valueOf(created),
+                    fromAccount, userId, String.valueOf(userUid), nickname, avatar);
             Context ctx = currentApplication();
             if (ctx == null) return;
             SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
-            sp.edit().putString("msg_" + roomId + "_" + id, b64).apply();
+            sp.edit().putString("msg_" + roomId + "_" + id, value).apply();
+            XposedBridge.log("[pocket48] cached revoked: id=" + id + " room=" + roomId + " type=" + messageType);
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] cache revoked error: " + t);
         }
     }
 
-    /** 恢复缓存消息：只恢复当前房间（与历史消息列表第一条 roomId 一致）的消息 */
-    private void restoreRevokedMessages(Object adapter, List<?> historyList) {
+    /** 恢复缓存消息：重建最小 YunXinMessage 并按房间插回当前列表 */
+    private void restoreRevokedMessages(ClassLoader cl, Object adapter, List<?> historyList) {
         try {
             Context ctx = currentApplication();
             if (ctx == null) return;
             String curRoomId = null;
             if (historyList != null && !historyList.isEmpty()) {
-                curRoomId = (String) XposedHelpers.callMethod(historyList.get(0), "getRoomId");
+                curRoomId = str(XposedHelpers.callMethod(historyList.get(0), "getRoomId"));
             }
+            if (curRoomId == null || curRoomId.isEmpty()) return; // 无法确定房间，跳过
             SharedPreferences sp = ctx.getSharedPreferences("pocket48_anti_revoke", Context.MODE_PRIVATE);
             Map<String, ?> all = sp.getAll();
             for (Map.Entry<String, ?> e : all.entrySet()) {
                 String key = e.getKey();
-                if (!key.startsWith("msg_")) continue;
+                if (!key.startsWith("msg_" + curRoomId + "_")) continue;
                 Object v = e.getValue();
                 if (!(v instanceof String)) continue;
-                if (curRoomId != null && !key.startsWith("msg_" + curRoomId + "_")) continue;
                 try {
-                    byte[] bytes = android.util.Base64.decode((String) v, android.util.Base64.NO_WRAP);
-                    ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(bytes));
-                    Object msg = ois.readObject();
-                    ois.close();
+                    Object msg = rebuildMessage(cl, (String) v);
                     if (msg != null) {
                         XposedHelpers.callMethod(adapter, "addToEnd", msg, false);
+                        XposedBridge.log("[pocket48] restored revoked: " + key);
                     }
                 } catch (Throwable ignore) {
+                    XposedBridge.log("[pocket48] restore one revoked error: " + ignore);
                 }
             }
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] restore revoked error: " + t);
         }
+    }
+
+    /** 从分隔字符串重建一个最小可渲染的文本 YunXinMessage（含最小 UserInfo，用于方向与展示） */
+    private Object rebuildMessage(ClassLoader cl, String value) {
+        try {
+            String[] f = value.split(SEP, -1);
+            if (f.length < 10) return null;
+            String id = f[0], roomId = f[1], messageType = f[2], text = f[3];
+            long created = Long.parseLong(f[4]);
+            String fromAccount = f[5], userId = f[6];
+            long userUid = Long.parseLong(f[7]);
+            String nickname = f[8], avatar = f[9];
+
+            Class<?> msgCls = XposedHelpers.findClass(YUNXIN_MSG, cl);
+            Object msg = XposedHelpers.newInstance(msgCls);
+            XposedHelpers.callMethod(msg, "setId", id);
+            XposedHelpers.callMethod(msg, "setRoomId", roomId);
+            XposedHelpers.setObjectField(msg, "messageType", messageType); // CustomAttachment.messageType（继承字段）
+            XposedHelpers.callMethod(msg, "setText", text);
+            try { XposedHelpers.callMethod(msg, "setContent", text); } catch (Throwable ignore) { }
+            XposedHelpers.callMethod(msg, "setCreatedAt", new Date(created));
+            try { XposedHelpers.callMethod(msg, "setFromAccount", fromAccount); } catch (Throwable ignore) { }
+            try { XposedHelpers.callMethod(msg, "setUserId", userId); } catch (Throwable ignore) { }
+
+            Class<?> userCls = XposedHelpers.findClass(USER_INFO_CLS, cl);
+            Object user = XposedHelpers.newInstance(userCls);
+            try { XposedHelpers.callMethod(user, "setUserId", userUid); } catch (Throwable ignore) { }
+            try { XposedHelpers.callMethod(user, "setNickname", nickname); } catch (Throwable ignore) { }
+            try { XposedHelpers.callMethod(user, "setNickName", nickname); } catch (Throwable ignore) { }
+            try { XposedHelpers.callMethod(user, "setAvatar", avatar); } catch (Throwable ignore) { }
+            XposedHelpers.callMethod(msg, "setUser", user);
+            return msg;
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] rebuild message error: " + t);
+            return null;
+        }
+    }
+
+    /** null 安全转字符串 */
+    private static String str(Object o) {
+        return o == null ? "" : o.toString();
     }
 
     /** 通用：把 hook 结果尾部的时间部分（pattern 匹配，如「晚上 08:14」的 08:14）替换为带秒版本 */
