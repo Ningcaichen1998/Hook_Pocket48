@@ -15,13 +15,15 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -89,6 +91,14 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String YUNXIN_MSG = "com.pocket.snh48.lib.yunxin.bean.YunXinMessage";
     private static final int ID_BUBBLE = 0x7f0a01af;     // id/bubble（气泡容器）
     private static final int ID_MSG_TIME_ADD = 0x7f7f0001; // 动态添加的时间 TextView 固定 id
+    private static final int ID_NAME = 0x7f0a13a0;        // 昵称 TextView（气泡 topToBottom 指向它，用于反推字段）
+    private static final int ID_CORNER_START = 0x7f0a089e; // 左上角装饰（startToStart+topToTop=bubble）
+    private static final int ID_CORNER_END = 0x7f0a0ba8;   // 右上角装饰（endToEnd+topToTop=bubble）
+
+    // 运行时反推出的 ConstraintLayout.LayoutParams 混淆约束字段（缓存）
+    private static volatile Field F_topToBottom;
+    private static volatile Field F_startToStart;
+    private static volatile Field F_endToEnd;
 
     // ===== 消息防撤回 =====
     private static final String REVOKE_M = "com.netease.nimlib.biz.c.j.m";
@@ -511,46 +521,108 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 在气泡下方显示时间（v2.18 方案：垂直 LinearLayout 包裹气泡）。
-     * 根容器是 ConstraintLayout，其约束字段（topToBottom 等）被 ProGuard 混淆成生僻字，
-     * 无法反射设置约束；setX/setY 动态定位又在复用/裁剪场景下不可靠。
-     * 因此改为：把气泡从根容器取出，包进一个垂直 LinearLayout（气泡在上、时间在下），
-     * 再放回原位置并**复用气泡原来的 LayoutParams** —— 容器继承气泡的全部约束行为，
-     * 内部用普通 LinearLayout 线性排布，完全不依赖混淆字段，也无需动态定位。
+     * 在气泡下方显示时间（v2.19 方案：兄弟 View + 反推混淆约束字段）。
+     * 根容器是 ConstraintLayout，约束字段（topToBottom 等）被 ProGuard 混淆，无法按名字反射；
+     * LinearLayout 包裹会破坏 onBind 里对 bubble.getLayoutParams() 的类型强转（导致崩溃）。
+     * 因此：把时间作为气泡的兄弟 View 加入，并在运行时从布局已有的约束值反推出混淆字段名，
+     * 直接设置真实约束（topToBottom/startToStart/endToEnd = 气泡），交给 ConstraintLayout 原生布局。
      */
     private void addTimeBelowBubble(ViewGroup root, String timeStr) {
         try {
             final View bubble = root.findViewById(ID_BUBBLE);
-            if (bubble == null) return; // 布局无气泡容器，跳过
+            if (bubble == null) return;
             TextView tv = (TextView) root.findViewById(ID_MSG_TIME_ADD);
             if (tv == null) {
-                ViewGroup parent = (ViewGroup) bubble.getParent();
-                if (parent == null) return;
-                ViewGroup.LayoutParams oldLp = bubble.getLayoutParams();
-                int index = parent.indexOfChild(bubble);
-                parent.removeView(bubble);
-
-                LinearLayout wrapper = new LinearLayout(root.getContext());
-                wrapper.setOrientation(LinearLayout.VERTICAL);
-                wrapper.addView(bubble, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams bubbleLp = bubble.getLayoutParams();
+                // 仅支持 ConstraintLayout 场景
+                if (bubbleLp == null || !bubbleLp.getClass().getName().contains("ConstraintLayout$LayoutParams")) {
+                    return;
+                }
+                Class<?> clLp = bubbleLp.getClass();
+                Object lpObj = clLp.getConstructor(int.class, int.class)
+                        .newInstance(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
 
                 tv = new TextView(root.getContext());
                 tv.setId(ID_MSG_TIME_ADD);
                 tv.setTextSize(10);
                 tv.setTextColor(0xFF8A8FA3);
                 tv.setGravity(android.view.Gravity.CENTER);
-                LinearLayout.LayoutParams timeLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                timeLp.topMargin = dpPx(root, 2);
-                wrapper.addView(tv, timeLp);
 
-                parent.addView(wrapper, index, oldLp);
+                // 反推混淆字段名并设置约束
+                deriveConstraintFields(root, clLp);
+                if (F_topToBottom == null || F_startToStart == null || F_endToEnd == null) {
+                    XposedBridge.log("[pocket48] derive constraint fields failed, skip time");
+                    return;
+                }
+                F_topToBottom.setInt(lpObj, ID_BUBBLE);
+                F_startToStart.setInt(lpObj, ID_BUBBLE);
+                F_endToEnd.setInt(lpObj, ID_BUBBLE);
+                ((ViewGroup.MarginLayoutParams) lpObj).topMargin = dpPx(root, 2);
+
+                root.addView(tv, (ViewGroup.LayoutParams) lpObj);
+                // 气泡底部对齐根容器底部，时间在气泡下方会被裁剪；底部加 padding 腾出空间
+                root.setPadding(root.getPaddingLeft(), root.getPaddingTop(), root.getPaddingRight(),
+                        root.getPaddingBottom() + dpPx(root, 18));
             }
             tv.setText(timeStr);
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] add time below error: " + t);
         }
+    }
+
+    /**
+     * 反推 ConstraintLayout.LayoutParams 中被混淆的约束字段名（只做一次，缓存到静态字段）。
+     * 依据（来自 item_channel_text_msg 布局）：
+     * - 气泡 topToBottom 指向昵称 TextView(ID_NAME)，故气泡 lp 中值为 ID_NAME 的 int 字段即 topToBottom
+     * - 左上角装饰(ID_CORNER_START) 有 startToStart=bubble + topToTop=bubble
+     * - 右上角装饰(ID_CORNER_END) 有 endToEnd=bubble + topToTop=bubble
+     *   两者取交集得 topToTop，各自差集得 startToStart / endToEnd
+     */
+    private void deriveConstraintFields(View root, Class<?> clLp) {
+        if (F_topToBottom != null && F_startToStart != null && F_endToEnd != null) return;
+        synchronized (this) {
+            if (F_topToBottom != null && F_startToStart != null && F_endToEnd != null) return;
+            View bubble = root.findViewById(ID_BUBBLE);
+            View name = root.findViewById(ID_NAME);
+            View cornerStart = root.findViewById(ID_CORNER_START);
+            View cornerEnd = root.findViewById(ID_CORNER_END);
+            // topToBottom：气泡 lp 中值为昵称 id 的 int 字段
+            F_topToBottom = findIntField(clLp, bubble.getLayoutParams(), name.getId());
+            // startToStart / endToEnd：从两个装饰视图反推
+            Set<Field> startSet = intFieldsEqualTo(clLp, cornerStart.getLayoutParams(), bubble.getId());
+            Set<Field> endSet = intFieldsEqualTo(clLp, cornerEnd.getLayoutParams(), bubble.getId());
+            Set<Field> common = new HashSet<>(startSet);
+            common.retainAll(endSet); // 交集 = topToTop
+            Set<Field> startOnly = new HashSet<>(startSet);
+            startOnly.removeAll(common);
+            Set<Field> endOnly = new HashSet<>(endSet);
+            endOnly.removeAll(common);
+            F_startToStart = startOnly.isEmpty() ? null : startOnly.iterator().next();
+            F_endToEnd = endOnly.isEmpty() ? null : endOnly.iterator().next();
+            XposedBridge.log("[pocket48] derived constraint fields: topToBottom=" + (F_topToBottom != null)
+                    + " startToStart=" + (F_startToStart != null) + " endToEnd=" + (F_endToEnd != null));
+        }
+    }
+
+    /** 在 lp 实例中查找值为 target 的 int 字段（用于反推约束字段） */
+    private Field findIntField(Class<?> clLp, Object lp, int target) {
+        Set<Field> set = intFieldsEqualTo(clLp, lp, target);
+        return set.isEmpty() ? null : set.iterator().next();
+    }
+
+    /** 返回 lp 实例中值等于 target 的所有 int 声明字段 */
+    private Set<Field> intFieldsEqualTo(Class<?> clLp, Object lp, int target) {
+        Set<Field> result = new HashSet<>();
+        if (lp == null) return result;
+        try {
+            for (Field f : clLp.getDeclaredFields()) {
+                if (f.getType() != int.class) continue;
+                f.setAccessible(true);
+                if (f.getInt(lp) == target) result.add(f);
+            }
+        } catch (Throwable ignore) {
+        }
+        return result;
     }
 
     private int dpPx(View v, int dp) {
