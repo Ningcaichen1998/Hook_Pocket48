@@ -8,7 +8,6 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -18,10 +17,7 @@ import android.os.Handler;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
-import android.view.ViewParent;
 import android.widget.EditText;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.lang.reflect.Field;
@@ -174,8 +170,6 @@ public class MainHook implements IXposedHookLoadPackage {
         hookExitLiveDirect(lp);
         // 默认底栏 tab 改为聚聚：无条件注册，开关经 ContentProvider 动态读取
         hookDefaultTabJuju(lp);
-        // 聚聚页 Telegram 化：无条件注册，开关经 ContentProvider 动态读取
-        hookJujuTelegram(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
             hookChannelAntiRevoke(lp);
@@ -875,205 +869,6 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private int dpPx(View v, int dp) {
         return (int) (v.getResources().getDisplayMetrics().density * dp + 0.5f);
-    }
-
-    // ===== 聚聚页 Telegram 化 =====
-    private static final String SERVER_ADAPTER = "com.pocket.snh48.activity.\u7cf4\u9f47\u8836\u7229\u7c3e\u9c45\u7c3e"; // AbstractC8667
-    private static final String SERVER_BIND = "\u7c72\u9c45\u9f98\u8c9c\u7c72\u7cf4\u7cf4"; // onBindViewHolder(ItemGroupBinding,int,GroupServer,int)
-    private static final String SERVER_BIND_CLS = "com.pocket.snh48.juju.databinding.ItemGroupBinding";
-    private static final String SERVER_DATA_CLS = "com.pocket.snh48.lib.room.bean.GroupServer";
-    private static final int ID_RIGHT_PANEL = 0x7f0a0968; // fragment_group 右侧详情容器
-
-    /** 左侧成员列表 + 页面 Telegram 风格化 */
-    private void hookJujuTelegram(XC_LoadPackage.LoadPackageParam lp) {
-        try {
-            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(SERVER_ADAPTER, lp.classLoader), SERVER_BIND,
-                    XposedHelpers.findClass(SERVER_BIND_CLS, lp.classLoader), int.class,
-                    XposedHelpers.findClass(SERVER_DATA_CLS, lp.classLoader), int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Context ctx = currentApplication();
-                                if (ctx == null || !readSwitch(ctx, "juju_telegram", true)) return;
-                                telegramizeItem(param.args[0]);
-                            } catch (Throwable t) {
-                                XposedBridge.log("[pocket48] telegramize error: " + t);
-                            }
-                        }
-                    });
-            XposedBridge.log("[pocket48] hooked juju telegram");
-        } catch (Throwable t) {
-            XposedBridge.log("[pocket48] hook juju telegram error: " + t);
-        }
-    }
-
-    /**
-     * 把左侧「Discord 风格竖窄列」item 重排为 Telegram 会话行：
-     * [圆形头像] [名称] [直播标] [未读徽章]，白底扁平，选中 Telegram 蓝。
-     * 避开被混淆的 ConstraintLayout 约束字段：把内容视图搬进自建水平 LinearLayout（无约束 → CL 左上角），
-     * root（item 根）本身满宽，直接作为整行背景。
-     */
-    private void telegramizeItem(Object binding) {
-        View root = (View) XposedHelpers.getObjectField(binding, "cl");
-        if (!(root instanceof ViewGroup)) return;
-        ViewGroup vg = (ViewGroup) root;
-        Context ctx = root.getContext();
-
-        View avatar = optView(binding, "avatar");
-        View userNameV = optView(binding, "userName");
-        View tvUnread = optView(binding, "tvUnread");
-        View ivLiving = optView(binding, "ivLiving");
-        ImageView iconSelect = (ImageView) optView(binding, "iconSelect");
-        View icHeader = optView(binding, "icHeader");
-        View icBottom = optView(binding, "icBottom");
-        View bgCenter = optView(binding, "bgCenter");
-
-        // Telegram 化装饰全部隐藏（选中紫框等）
-        hide(iconSelect, icHeader, icBottom, bgCenter);
-        boolean selected = iconSelect != null && iconSelect.getVisibility() == View.VISIBLE;
-
-        if (userNameV instanceof TextView) {
-            TextView userName = (TextView) userNameV;
-            userName.setTextSize(15);
-            userName.setMaxLines(1);
-            userName.setTextColor(Color.parseColor(selected ? "#3390EC" : "#000000"));
-        }
-
-        // 复用已有的内容行
-        LinearLayout ll = null;
-        for (int i = 0; i < vg.getChildCount(); i++) {
-            View c = vg.getChildAt(i);
-            if (c instanceof LinearLayout && "tg".equals(c.getTag())) {
-                ll = (LinearLayout) c;
-                break;
-            }
-        }
-
-        if (ll == null && avatar != null && userNameV != null) {
-            ll = new LinearLayout(ctx);
-            ll.setTag("tg");
-            ll.setOrientation(LinearLayout.HORIZONTAL);
-            ll.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            int ph = dpPx(root, 12);
-            int pv = dpPx(root, 10);
-            ll.setPadding(ph, pv, ph, pv);
-            ViewGroup vgF = vg;
-            vgF.removeView(avatar);
-            vgF.removeView(userNameV);
-            if (ivLiving != null) vgF.removeView(ivLiving);
-            if (tvUnread != null) vgF.removeView(tvUnread);
-
-            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dpPx(root, 48), dpPx(root, 48));
-            ll.addView(avatar, alp);
-
-            LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            nlp.leftMargin = dpPx(root, 14);
-            ((TextView) userNameV).setMaxWidth(dpPx(root, 90));
-            ll.addView(userNameV, nlp);
-
-            if (ivLiving instanceof View) {
-                LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(dpPx(root, 18), dpPx(root, 18));
-                vlp.leftMargin = dpPx(root, 6);
-                ll.addView(ivLiving, vlp);
-            }
-            if (tvUnread instanceof TextView) {
-                TextView badge = (TextView) tvUnread;
-                GradientDrawable bg = new GradientDrawable();
-                bg.setColor(Color.parseColor("#E53935"));
-                bg.setCornerRadius(dpPx(root, 11));
-                badge.setBackground(bg);
-                badge.setTextColor(Color.WHITE);
-                badge.setTextSize(11);
-                badge.setMinWidth(dpPx(root, 20));
-                badge.setGravity(android.view.Gravity.CENTER);
-                int hpad = dpPx(root, 5);
-                badge.setPadding(hpad, dpPx(root, 2), hpad, dpPx(root, 2));
-                LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                ulp.leftMargin = dpPx(root, 8);
-                ulp.gravity = android.view.Gravity.CENTER_VERTICAL;
-                ll.addView(badge, ulp);
-            }
-            // CL 对无约束子视图：左上角、按 lp 尺寸摆放（wrap），正好作为内容行
-            vg.addView(ll, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
-
-        // 整行背景（root 满宽）
-        root.setBackgroundColor(Color.parseColor(selected ? "#E8F3FC" : "#FFFFFF"));
-
-        // 页面级改造：左栏加宽、页面/右栏白底。
-        // 注意：Fragment 重建会重新 inflate 布局（宽度和背景被重置），因此这里必须幂等地每次执行，
-        // 不能用一次性标记；开销仅为几个字段比较。
-        try {
-            ViewParent p = root.getParent();
-            if (p instanceof ViewGroup) { // ryServerList
-                View rv = (View) p;
-                if (tagged(rv, "tg_rv")) {
-                    // 已处理过本实例
-                } else {
-                    rv.setBackgroundColor(Color.TRANSPARENT);
-                    tag(rv, "tg_rv");
-                }
-                ViewParent barP = rv.getParent();
-                if (barP instanceof View) { // 左栏 LinearLayout(60dp)
-                    View bar = (View) barP;
-                    ViewGroup.LayoutParams blp = bar.getLayoutParams();
-                    if (blp != null && blp.width != ViewGroup.LayoutParams.MATCH_PARENT
-                            && blp.width < dpPx(root, 180)) {
-                        blp.width = dpPx(root, 210);
-                        bar.setLayoutParams(blp);
-                        XposedBridge.log("[pocket48] juju left bar widened to 210dp");
-                    }
-                    ViewParent pageP = bar.getParent();
-                    if (pageP instanceof ViewGroup) { // 页面 ConstraintLayout
-                        ViewGroup page = (ViewGroup) pageP;
-                        if (!tagged(page, "tg_page")) {
-                            page.setBackgroundColor(Color.WHITE);
-                            for (int i = 0; i < page.getChildCount(); i++) {
-                                View c = page.getChildAt(i);
-                                if (c.getId() == ID_RIGHT_PANEL) {
-                                    GradientDrawable g = new GradientDrawable();
-                                    g.setColor(Color.WHITE);
-                                    g.setCornerRadius(dpPx(root, 14));
-                                    c.setBackground(g);
-                                    break;
-                                }
-                            }
-                            tag(page, "tg_page");
-                            XposedBridge.log("[pocket48] juju page telegramized");
-                        }
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            // 页面级失败不影响 item 级
-            XposedBridge.log("[pocket48] juju page telegramize error: " + t);
-        }
-    }
-
-    private static void tag(View v, String tag) {
-        v.setTag(tag);
-    }
-
-    private static boolean tagged(View v, String tag) {
-        return tag.equals(v.getTag());
-    }
-
-    private static View optView(Object binding, String field) {
-        try {
-            Object o = XposedHelpers.getObjectField(binding, field);
-            return o instanceof View ? (View) o : null;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    private static void hide(View... views) {
-        for (View v : views) {
-            if (v != null) v.setVisibility(View.GONE);
-        }
     }
 
     /** 消息防撤回：拦截 NIM 撤回通知处理（u=单条撤回 / aa=批量撤回），消息不被删除 */
