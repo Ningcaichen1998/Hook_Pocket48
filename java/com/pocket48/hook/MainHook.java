@@ -876,13 +876,47 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     // ===== 点击左栏头像直达聊天房间 =====
+    // 聚聚双栏：左栏 C10172 点头像 → C14568.m43496 右栏选中；聊天在 ChannelDetailActivity（vpDialog 页面 1），
+    // 需从右栏频道列表（C10397）再点一次才通过 SNHActivityUtils.m44385 路由跳转。
+    // 本功能：点头像时自动触发 m44385 跳转（channelId 传空=默认频道），跳转后 m26065 切到聊天页。
+    private static final String CHANNEL_LIST_FRAG = "com.pocket.snh48.activity.\u9f98\u9c45"; // C14568（右栏频道列表 Fragment）
+    private static final String CHANNEL_LIST_SELECT = "\u7c3e\u7cf4\u7229"; // m43496(GroupServer) 选中频道
+    private static final String GROUP_SERVER_CLS = "com.pocket.snh48.lib.room.bean.GroupServer";
+    private static final String SNH_ACT_UTILS = "com.pocket.snh48.base.rounter.SNHActivityUtils";
+    private static final String OPEN_CHANNEL = "\u7ac8\u7cf4\u8836\u9f47\u7c72\u8836\u8836\u7229"; // m44385(Context,String,String,String,String,String,boolean)
+
     /**
-     * 聚聚双栏布局：点击左栏头像 → m26065 切换房间 → 右栏 vpDialog 默认停在页面 0（频道首页）。
-     * Hook after 把 vpDialog 切到页面 1（聊天房间）。setCurrentItem 会触发 onPageSelected，
-     * App 内部页面状态（f41720）自动同步，无需手动维护。
+     * 点击左栏头像 → 直接跳转到该小偶像的聊天房间（跳过「频道首页」）。
+     * 两步：① 点头像（m43496）自动路由跳转 ChannelDetailActivity；② 跳转后（m26065）vpDialog 切到聊天页。
      */
     private void hookJujuDirectRoom(XC_LoadPackage.LoadPackageParam lp) {
         try {
+            // ① 点头像 → 自动路由跳转频道详情（channelId 空 = 默认频道）
+            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(CHANNEL_LIST_FRAG, lp.classLoader), CHANNEL_LIST_SELECT,
+                    XposedHelpers.findClass(GROUP_SERVER_CLS, lp.classLoader), new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Context ctx = currentApplication();
+                                if (ctx == null || !readSwitch(ctx, "juju_direct_room", true)) return;
+                                Object gs = param.args[0];
+                                if (gs == null) return;
+                                Object fragCtx = XposedHelpers.callMethod(param.thisObject, "getContext");
+                                if (!(fragCtx instanceof Context)) return;
+                                String serverId = str(XposedHelpers.callMethod(gs, "getId"));
+                                String owner = str(XposedHelpers.callMethod(gs, "getOwner"));
+                                String avatar = str(XposedHelpers.callMethod(gs, "getAvatar"));
+                                String serverName = str(XposedHelpers.callMethod(gs, "getServerName"));
+                                Class<?> util = XposedHelpers.findClass(SNH_ACT_UTILS, lp.classLoader);
+                                XposedHelpers.callStaticMethod(util, OPEN_CHANNEL, fragCtx, "", serverId, owner, avatar, serverName, false);
+                                XposedBridge.log("[pocket48] direct room: open channel via route, serverId=" + serverId);
+                            } catch (Throwable t) {
+                                XposedBridge.log("[pocket48] direct room: open error " + t);
+                            }
+                        }
+                    });
+
+            // ② 进入频道后（m26065）vpDialog 切到聊天页
             XposedHelpers.findAndHookMethod(XposedHelpers.findClass(CHANNEL_FRAGMENT, lp.classLoader), CHANNEL_SWITCH_ROOM, String.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
