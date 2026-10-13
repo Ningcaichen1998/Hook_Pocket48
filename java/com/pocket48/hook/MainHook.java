@@ -888,14 +888,18 @@ public class MainHook implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         Context ctx = currentApplication();
-                        if (ctx == null || !readSwitch(ctx, "juju_direct_room", true)) return;
+                        boolean sw = readSwitch(ctx, "juju_direct_room", true);
+                        XposedBridge.log("[pocket48] direct room fired, switch=" + sw);
+                        if (ctx == null || !sw) return;
                         Object act = XposedHelpers.callMethod(param.thisObject, "getActivity");
-                        if (act == null || !CHANNEL_DETAIL_ACT.equals(act.getClass().getName())) return;
+                        if (act == null) { XposedBridge.log("[pocket48] direct room: act null"); return; }
+                        XposedBridge.log("[pocket48] direct room: act=" + act.getClass().getName());
                         Object binding = XposedHelpers.getObjectField(act, "binding");
-                        if (binding == null) return;
+                        if (binding == null) { XposedBridge.log("[pocket48] direct room: binding null"); return; }
                         Object vp = XposedHelpers.getObjectField(binding, "vpDialog");
-                        if (vp == null) return;
+                        if (vp == null) { XposedBridge.log("[pocket48] direct room: vp null"); return; }
                         XposedHelpers.callMethod(vp, "setCurrentItem", 1, false);
+                        XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] direct room error: " + t);
                     }
