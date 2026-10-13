@@ -116,6 +116,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String CHANNEL_FRAGMENT = "com.pocket.snh48.activity.\u7675\u7c72\u7229\u9c45\u7c72\u9c45\u9f98\u9f98"; // C4919
     private static final String CHANNEL_SWITCH_ROOM = "\u7675\u7675\u9f15"; // m26065(String) 切换房间
     private static volatile String currentRoomId = ""; // 当前房间 id（m26065 记录）
+    // 聚聚右栏详情 Activity（双栏模式嵌入，vpDialog: 0=频道首页 1=聊天房间）
+    private static final String CHANNEL_DETAIL_ACT = "com.pocket.snh48.juju.ui.dialog.activity.ChannelDetailActivity";
 
     // ===== 频道顶栏 tab 过滤（服务端下发的 MsgTypeTab） =====
     private static final String CHANNEL_TAB_WRAPER = "com.pocket.snh48.juju.bean.chat.group.ChannelTabWraper";
@@ -170,6 +172,8 @@ public class MainHook implements IXposedHookLoadPackage {
         hookExitLiveDirect(lp);
         // 默认底栏 tab 改为聚聚：无条件注册，开关经 ContentProvider 动态读取
         hookDefaultTabJuju(lp);
+        // 点击左栏头像直达聊天房间：无条件注册，开关经 ContentProvider 动态读取
+        hookJujuDirectRoom(lp);
         if (sp.getBoolean("msg_anti_revoke", true)) {
             hookAntiRevoke(lp);
             hookChannelAntiRevoke(lp);
@@ -869,6 +873,38 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private int dpPx(View v, int dp) {
         return (int) (v.getResources().getDisplayMetrics().density * dp + 0.5f);
+    }
+
+    // ===== 点击左栏头像直达聊天房间 =====
+    /**
+     * 聚聚双栏布局：点击左栏头像 → m26065 切换房间 → 右栏 vpDialog 默认停在页面 0（频道首页）。
+     * Hook after 把 vpDialog 切到页面 1（聊天房间）。setCurrentItem 会触发 onPageSelected，
+     * App 内部页面状态（f41720）自动同步，无需手动维护。
+     */
+    private void hookJujuDirectRoom(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(CHANNEL_FRAGMENT, lp.classLoader), CHANNEL_SWITCH_ROOM, String.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = currentApplication();
+                        if (ctx == null || !readSwitch(ctx, "juju_direct_room", true)) return;
+                        Object act = XposedHelpers.callMethod(param.thisObject, "getActivity");
+                        if (act == null || !CHANNEL_DETAIL_ACT.equals(act.getClass().getName())) return;
+                        Object binding = XposedHelpers.getObjectField(act, "binding");
+                        if (binding == null) return;
+                        Object vp = XposedHelpers.getObjectField(binding, "vpDialog");
+                        if (vp == null) return;
+                        XposedHelpers.callMethod(vp, "setCurrentItem", 1, false);
+                    } catch (Throwable t) {
+                        XposedBridge.log("[pocket48] direct room error: " + t);
+                    }
+                }
+            });
+            XposedBridge.log("[pocket48] hooked juju direct room");
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] hook direct room error: " + t);
+        }
     }
 
     /** 消息防撤回：拦截 NIM 撤回通知处理（u=单条撤回 / aa=批量撤回），消息不被删除 */
