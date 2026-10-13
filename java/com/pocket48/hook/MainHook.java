@@ -916,45 +916,46 @@ public class MainHook implements IXposedHookLoadPackage {
                         }
                     });
 
-            // ② 进入频道后（m26065）vpDialog 切到聊天页
-            XposedHelpers.findAndHookMethod(XposedHelpers.findClass(CHANNEL_FRAGMENT, lp.classLoader), CHANNEL_SWITCH_ROOM, String.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        Context ctx = currentApplication();
-                        boolean sw = readSwitch(ctx, "juju_direct_room", true);
-                        XposedBridge.log("[pocket48] direct room fired, switch=" + sw);
-                        if (ctx == null || !sw) return;
-                        Object act = XposedHelpers.callMethod(param.thisObject, "getActivity");
-                        if (act == null) { XposedBridge.log("[pocket48] direct room: act null"); return; }
-                        XposedBridge.log("[pocket48] direct room: act=" + act.getClass().getName());
-                        Object binding = XposedHelpers.getObjectField(act, "binding");
-                        if (binding == null) { XposedBridge.log("[pocket48] direct room: binding null"); return; }
-                        Object vp = XposedHelpers.getObjectField(binding, "vpDialog");
-                        if (vp == null) { XposedBridge.log("[pocket48] direct room: vp null"); return; }
-                        // post 到 UI 线程下一轮执行，确保 vpDialog 布局稳定后再切页（避免被后续布局刷新覆盖）
-                        final Object vpFinal = vp;
-                        if (vp instanceof View) {
-                            ((View) vp).post(new Runnable() {
+            // ② 锁死 vpDialog 永远在聊天页：拦截 setCurrentItem(0/其他) 强制切 1，阻止回频道首页
+            try {
+                final Class<?> actCls = XposedHelpers.findClass(CHANNEL_DETAIL_ACT, lp.classLoader);
+                XposedHelpers.findAndHookMethod(actCls, "onCreate", android.os.Bundle.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Context ctx = currentApplication();
+                            if (ctx == null || !readSwitch(ctx, "juju_direct_room", true)) return;
+                            Object binding = XposedHelpers.getObjectField(param.thisObject, "binding");
+                            if (binding == null) return;
+                            final Object vp = XposedHelpers.getObjectField(binding, "vpDialog");
+                            if (vp == null) return;
+                            // 拦截 setCurrentItem(int,boolean)：0→强制 1，1 正常通过
+                            XposedHelpers.findAndHookMethod(vp.getClass(), "setCurrentItem", int.class, boolean.class, new XC_MethodHook() {
                                 @Override
-                                public void run() {
-                                    try {
-                                        XposedHelpers.callMethod(vpFinal, "setCurrentItem", 1, false);
-                                        XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
-                                    } catch (Throwable t) {
-                                        XposedBridge.log("[pocket48] direct room: set error " + t);
+                                protected void beforeHookedMethod(MethodHookParam param) {
+                                    int target = (int) param.args[0];
+                                    if (target == 0) {
+                                        param.args[0] = 1;
+                                        XposedBridge.log("[pocket48] direct room: blocked back to homepage");
                                     }
                                 }
                             });
-                        } else {
-                            XposedHelpers.callMethod(vpFinal, "setCurrentItem", 1, false);
-                            XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
+                            // 进入时直接切到聊天页
+                            ((android.view.View) vp).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    XposedHelpers.callMethod(vp, "setCurrentItem", 1, false);
+                                }
+                            });
+                            XposedBridge.log("[pocket48] direct room: vp locked to chat page");
+                        } catch (Throwable t) {
+                            XposedBridge.log("[pocket48] direct room: lock vp error " + t);
                         }
-                    } catch (Throwable t) {
-                        XposedBridge.log("[pocket48] direct room error: " + t);
                     }
-                }
-            });
+                });
+            } catch (Throwable t) {
+                XposedBridge.log("[pocket48] direct room: lock vp init error " + t);
+            }
             XposedBridge.log("[pocket48] hooked juju direct room");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] hook direct room error: " + t);
