@@ -898,8 +898,24 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (binding == null) { XposedBridge.log("[pocket48] direct room: binding null"); return; }
                         Object vp = XposedHelpers.getObjectField(binding, "vpDialog");
                         if (vp == null) { XposedBridge.log("[pocket48] direct room: vp null"); return; }
-                        XposedHelpers.callMethod(vp, "setCurrentItem", 1, false);
-                        XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
+                        // post 到 UI 线程下一轮执行，确保 vpDialog 布局稳定后再切页（避免被后续布局刷新覆盖）
+                        final Object vpFinal = vp;
+                        if (vp instanceof View) {
+                            ((View) vp).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        XposedHelpers.callMethod(vpFinal, "setCurrentItem", 1, false);
+                                        XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
+                                    } catch (Throwable t) {
+                                        XposedBridge.log("[pocket48] direct room: set error " + t);
+                                    }
+                                }
+                            });
+                        } else {
+                            XposedHelpers.callMethod(vpFinal, "setCurrentItem", 1, false);
+                            XposedBridge.log("[pocket48] direct room: setCurrentItem(1) done");
+                        }
                     } catch (Throwable t) {
                         XposedBridge.log("[pocket48] direct room error: " + t);
                     }
