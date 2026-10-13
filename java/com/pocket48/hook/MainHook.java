@@ -1035,13 +1035,15 @@ public class MainHook implements IXposedHookLoadPackage {
                 try {
                     Object msg = rebuildMessage(cl, (String) v);
                     if (msg != null) {
-                        XposedHelpers.callMethod(adapter, "addToEnd", msg, false);
+                        insertMessageSorted(cl, adapter, msg);
                         XposedBridge.log("[pocket48] restored revoked: " + key);
                     }
                 } catch (Throwable ignore) {
                     XposedBridge.log("[pocket48] restore one revoked error: " + ignore);
                 }
             }
+            // 全部插入完成后一次性刷新列表
+            XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
         } catch (Throwable t) {
             XposedBridge.log("[pocket48] restore revoked error: " + t);
         }
@@ -1086,6 +1088,86 @@ public class MainHook implements IXposedHookLoadPackage {
     /** null 安全转字符串 */
     private static String str(Object o) {
         return o == null ? "" : o.toString();
+    }
+
+    /**
+     * 把恢复的消息按 createdAt 精确插入 adapter 的 items 列表（含日期头），保持消息时间顺序。
+     * 列表布局约定：items[0] 显示在顶部，「上=旧、下=新」，每组为 [日期头Wrapper, 消息Wrapper...]。
+     * 逐条调用即可，多条恢复消息无论缓存遍历顺序如何最终都有序。
+     */
+    private void insertMessageSorted(ClassLoader cl, Object adapter, Object msg) {
+        try {
+            Date createdAt = (Date) XposedHelpers.callMethod(msg, "getCreatedAt");
+            long t = createdAt == null ? 0L : createdAt.getTime();
+            @SuppressWarnings("unchecked")
+            java.util.List<Object> items = (java.util.List<Object>) XposedHelpers.getObjectField(adapter, "items");
+            // 防重：同 id 消息已存在则跳过
+            String id = str(XposedHelpers.callMethod(msg, "getId"));
+            for (Object w : items) {
+                Object item = XposedHelpers.getObjectField(w, "item");
+                if (item instanceof Date) continue;
+                if (str(XposedHelpers.callMethod(item, "getId")).equals(id)) return;
+            }
+            // 找插入位置：第一个 createdAt > t 的消息条目
+            int insertIdx = items.size();
+            Date nextDate = null;
+            for (int i = 0; i < items.size(); i++) {
+                Object item = XposedHelpers.getObjectField(items.get(i), "item");
+                if (item instanceof Date) continue;
+                Date d = (Date) XposedHelpers.callMethod(item, "getCreatedAt");
+                if (d != null && d.getTime() > t) {
+                    insertIdx = i;
+                    nextDate = d;
+                    break;
+                }
+            }
+            Class<?> wrapperCls = XposedHelpers.findClass(MSG_LIST_ADAPTER + "$Wrapper", cl);
+            boolean addedHeader = false;
+            if (items.isEmpty()) {
+                Object hw = XposedHelpers.newInstance(wrapperCls, adapter, createdAt == null ? new Date() : createdAt);
+                items.add(0, hw);
+                insertIdx = 1;
+                addedHeader = true;
+            } else if (nextDate != null && !sameDay(createdAt, nextDate)) {
+                // 与后面那条消息不同天：在原组头之前插入自己的日期头
+                int dateIdx = Math.max(0, insertIdx - 1);
+                Object hw = XposedHelpers.newInstance(wrapperCls, adapter, createdAt);
+                items.add(dateIdx, hw);
+                insertIdx = dateIdx + 1;
+                addedHeader = true;
+            } else if (nextDate == null && !items.isEmpty()) {
+                // 插到末尾：与最后一条消息不同天时补日期头
+                Date lastDate = null;
+                for (int i = items.size() - 1; i >= 0; i--) {
+                    Object item = XposedHelpers.getObjectField(items.get(i), "item");
+                    if (item instanceof Date) continue;
+                    lastDate = (Date) XposedHelpers.callMethod(item, "getCreatedAt");
+                    break;
+                }
+                if (lastDate != null && !sameDay(createdAt, lastDate)) {
+                    Object hw = XposedHelpers.newInstance(wrapperCls, adapter, createdAt);
+                    items.add(items.size(), hw);
+                    insertIdx = items.size();
+                    addedHeader = true;
+                }
+            }
+            Object mw = XposedHelpers.newInstance(wrapperCls, adapter, msg);
+            items.add(insertIdx, mw);
+            XposedBridge.log("[pocket48] inserted revoked at idx=" + insertIdx + " header=" + addedHeader);
+        } catch (Throwable t) {
+            XposedBridge.log("[pocket48] insert revoked error: " + t);
+        }
+    }
+
+    /** 判断两个时间是否同一天（自然日） */
+    private static boolean sameDay(Date a, Date b) {
+        if (a == null || b == null) return true;
+        java.util.Calendar ca = java.util.Calendar.getInstance();
+        ca.setTime(a);
+        java.util.Calendar cb = java.util.Calendar.getInstance();
+        cb.setTime(b);
+        return ca.get(java.util.Calendar.YEAR) == cb.get(java.util.Calendar.YEAR)
+                && ca.get(java.util.Calendar.DAY_OF_YEAR) == cb.get(java.util.Calendar.DAY_OF_YEAR);
     }
 
     /** 通用：把 hook 结果尾部的时间部分（pattern 匹配，如「晚上 08:14」的 08:14）替换为带秒版本 */
