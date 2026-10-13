@@ -883,7 +883,6 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String SERVER_BIND_CLS = "com.pocket.snh48.juju.databinding.ItemGroupBinding";
     private static final String SERVER_DATA_CLS = "com.pocket.snh48.lib.room.bean.GroupServer";
     private static final int ID_RIGHT_PANEL = 0x7f0a0968; // fragment_group 右侧详情容器
-    private static volatile boolean tgPageDone = false;   // 页面级改造只做一次
 
     /** 左侧成员列表 + 页面 Telegram 风格化 */
     private void hookJujuTelegram(XC_LoadPackage.LoadPackageParam lp) {
@@ -971,7 +970,7 @@ public class MainHook implements IXposedHookLoadPackage {
             LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             nlp.leftMargin = dpPx(root, 14);
-            ((TextView) userNameV).setMaxWidth(dpPx(root, 130));
+            ((TextView) userNameV).setMaxWidth(dpPx(root, 90));
             ll.addView(userNameV, nlp);
 
             if (ivLiving instanceof View) {
@@ -1004,40 +1003,62 @@ public class MainHook implements IXposedHookLoadPackage {
         // 整行背景（root 满宽）
         root.setBackgroundColor(Color.parseColor(selected ? "#E8F3FC" : "#FFFFFF"));
 
-        // 页面级改造：左栏加宽、页面/右栏白底（只做一次）
-        if (!tgPageDone) {
+        // 页面级改造：左栏加宽、页面/右栏白底。
+        // 注意：Fragment 重建会重新 inflate 布局（宽度和背景被重置），因此这里必须幂等地每次执行，
+        // 不能用一次性标记；开销仅为几个字段比较。
+        try {
             ViewParent p = root.getParent();
             if (p instanceof ViewGroup) { // ryServerList
                 View rv = (View) p;
-                rv.setBackgroundColor(Color.TRANSPARENT);
+                if (tagged(rv, "tg_rv")) {
+                    // 已处理过本实例
+                } else {
+                    rv.setBackgroundColor(Color.TRANSPARENT);
+                    tag(rv, "tg_rv");
+                }
                 ViewParent barP = rv.getParent();
                 if (barP instanceof View) { // 左栏 LinearLayout(60dp)
                     View bar = (View) barP;
                     ViewGroup.LayoutParams blp = bar.getLayoutParams();
-                    if (blp != null && blp.width < dpPx(root, 180)) {
+                    if (blp != null && blp.width != ViewGroup.LayoutParams.MATCH_PARENT
+                            && blp.width < dpPx(root, 180)) {
                         blp.width = dpPx(root, 210);
                         bar.setLayoutParams(blp);
+                        XposedBridge.log("[pocket48] juju left bar widened to 210dp");
                     }
                     ViewParent pageP = bar.getParent();
                     if (pageP instanceof ViewGroup) { // 页面 ConstraintLayout
                         ViewGroup page = (ViewGroup) pageP;
-                        page.setBackgroundColor(Color.WHITE);
-                        for (int i = 0; i < page.getChildCount(); i++) {
-                            View c = page.getChildAt(i);
-                            if (c.getId() == ID_RIGHT_PANEL) {
-                                GradientDrawable g = new GradientDrawable();
-                                g.setColor(Color.WHITE);
-                                g.setCornerRadius(dpPx(root, 14));
-                                c.setBackground(g);
-                                break;
+                        if (!tagged(page, "tg_page")) {
+                            page.setBackgroundColor(Color.WHITE);
+                            for (int i = 0; i < page.getChildCount(); i++) {
+                                View c = page.getChildAt(i);
+                                if (c.getId() == ID_RIGHT_PANEL) {
+                                    GradientDrawable g = new GradientDrawable();
+                                    g.setColor(Color.WHITE);
+                                    g.setCornerRadius(dpPx(root, 14));
+                                    c.setBackground(g);
+                                    break;
+                                }
                             }
+                            tag(page, "tg_page");
+                            XposedBridge.log("[pocket48] juju page telegramized");
                         }
-                        tgPageDone = true;
-                        XposedBridge.log("[pocket48] juju page telegramized");
                     }
                 }
             }
+        } catch (Throwable t) {
+            // 页面级失败不影响 item 级
+            XposedBridge.log("[pocket48] juju page telegramize error: " + t);
         }
+    }
+
+    private static void tag(View v, String tag) {
+        v.setTag(tag);
+    }
+
+    private static boolean tagged(View v, String tag) {
+        return tag.equals(v.getTag());
     }
 
     private static View optView(Object binding, String field) {
